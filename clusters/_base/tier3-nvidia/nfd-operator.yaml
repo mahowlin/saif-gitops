@@ -1,0 +1,38 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+# Node Feature Discovery Operator - detects hardware features on nodes
+# Required for GPU Operator to detect NVIDIA GPUs
+# OLM-based: installs via Subscription + OperatorGroup (manages CRDs, RBAC automatically)
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: nfd-operator
+  namespace: openshift-gitops
+  annotations:
+    argocd.argoproj.io/sync-wave: "-3"  # Before GPU operator
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/mahowlin/saif-gitops.git
+    targetRevision: main
+    path: apps/nfd-operator
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: openshift-nfd
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - RespectIgnoreDifferences=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m

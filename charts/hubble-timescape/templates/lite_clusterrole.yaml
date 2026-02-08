@@ -1,0 +1,27 @@
+{{- if .Values.lite.enabled }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "hubble-timescape-lite.fullname" . }}-k8s-importer
+  labels:
+    {{- include "hubble-timescape-lite.labels" . | nindent 4 }}
+rules: {{- include "hubble-timescape-ingester.k8sImporter.clusterRole.rules" . | nindent 2 }}
+{{- if and .Values.ui.enabled .Values.ui.loadBalancing.enabled }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "hubble-timescape-lite.fullname" . }}-ilb
+  labels:
+    {{- include "hubble-timescape-lite.labels" . | nindent 4 }}
+    {{- with .Values.ui.loadBalancing.clusterRole.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.ui.loadBalancing.clusterRole.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+rules: {{- include "hubble-timescape-ui.loadBalancing.clusterRole.rules" . | nindent 2 }}
+{{- end }}
+{{- end }}

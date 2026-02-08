@@ -1,0 +1,23 @@
+{{- $tls := merge dict .Values.clickhouse.tls .Values.tls -}}
+{{- if and .Values.clickhouse.cluster.enabled $tls.enabled $tls.auto.enabled (eq $tls.auto.method "certmanager") }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: hubble-timescape-clickhouse-cert
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hubble-timescape-clickhouse.labels" . | nindent 4 }}
+spec:
+  secretName: hubble-timescape-clickhouse-cert
+  isCA: false
+  privateKey: {{ toYaml $tls.auto.certmanager.privateKey | nindent 4 }}
+  usages:
+    - server auth
+  commonName: clickhouse-hubble-timescape
+  dnsNames:
+    - "clickhouse-hubble-timescape"
+    - "clickhouse-hubble-timescape.{{ .Release.Namespace }}"
+    - "clickhouse-hubble-timescape.{{ .Release.Namespace }}.svc.cluster.local"
+  issuerRef:
+    {{- required "clickhouse.tls.auto.certmanager.issuerRef must be set with clickhouse.tls.auto.method=certmanager" $tls.auto.certmanager.issuerRef | toYaml | nindent 4 }}
+{{- end }}

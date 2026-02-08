@@ -1,0 +1,105 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+# Cilium Day 2 Configuration - Default Values
+# Override these in ArgoCD Application spec.source.helm.values
+#
+# All features disabled by default. Enable per-cluster via ArgoCD Application values.
+
+# Cluster identification (used in resource names)
+clusterName: ""  # Required: e.g., "ai-pod-1"
+
+# =============================================================================
+# CiliumConfig CR - Core Cilium operator configuration
+# =============================================================================
+ciliumConfig:
+  enabled: true
+  # IPAM settings - Cilium pod network (must not overlap with OVN)
+  ipam:
+    cidr: ""        # Required: e.g., "10.132.0.0/14"
+    hostPrefix: 24  # Per-node prefix size
+  # Kubernetes API endpoint (internal)
+  apiHost: ""       # Required: e.g., "api-int.cluster-1.example.com"
+
+# =============================================================================
+# L2 Announcements - ARP-based LoadBalancer IP advertisement
+# =============================================================================
+l2:
+  enabled: false
+  # Network interface for ARP announcements (br-ex = OpenShift OVS bridge)
+  device: "br-ex"
+
+# =============================================================================
+# LoadBalancer IP Pool - IP range for LoadBalancer services
+# =============================================================================
+ipPool:
+  enabled: false
+  # Pool name (defaults to <clusterName>-lb-pool)
+  name: ""
+  # IP range - must be unique per cluster, no overlaps!
+  start: ""   # e.g., "10.0.1.80"
+  stop: ""    # e.g., "10.0.1.89"
+
+# =============================================================================
+# BGP - Border Gateway Protocol peering for IP advertisement
+# =============================================================================
+bgp:
+  enabled: false
+  # Local Autonomous System Number
+  localASN: 65000
+  # Export pod CIDRs via BGP
+  exportPodCIDR: false
+  # Service selector for which services to advertise (empty = all LoadBalancer)
+  serviceSelector: {}
+  # BGP neighbors (peers)
+  neighbors: []
+  # Example:
+  # neighbors:
+  #   - address: "10.0.1.1"
+  #     asn: 65000
+  #     port: 179
+
+# =============================================================================
+# Egress Gateway - Source NAT for outbound traffic
+# =============================================================================
+egressGateway:
+  enabled: false
+  # Node selector for egress gateway nodes
+  nodeSelector: {}
+  # Example:
+  # nodeSelector:
+  #   matchLabels:
+  #     egress-gateway: "true"
+  # Egress IP (SNAT source)
+  egressIP: ""
+  # Destination CIDRs to route through egress gateway
+  destinationCIDRs: []
+  # Example:
+  # destinationCIDRs:
+  #   - "0.0.0.0/0"
+
+# =============================================================================
+# Gateway API - Kubernetes-native ingress/egress routing
+# =============================================================================
+gatewayAPI:
+  enabled: true
+  # GatewayClass name (default: cilium)
+  gatewayClassName: "cilium"
+
+# =============================================================================
+# Cluster-wide Network Policy - Platform security policies
+# =============================================================================
+clusterPolicy:
+  enabled: false
+  # Policies defined as list
+  policies: []
+  # Example:
+  # policies:
+  #   - name: "deny-external-egress"
+  #     description: "Deny egress to external networks"
+  #     specs:
+  #       endpointSelector: {}
+  #       egressDeny:
+  #         - toCIDRSet:
+  #             - cidr: "0.0.0.0/0"

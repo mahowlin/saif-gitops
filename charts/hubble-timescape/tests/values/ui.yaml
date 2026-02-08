@@ -1,0 +1,92 @@
+clickhouse:
+  cluster:
+    enabled: true
+    volumes:
+      data:
+        size: 1Ti
+        storageClassName: ""
+    prometheus:
+      serviceMonitor:
+        enabled: true
+      tableMetrics:
+        enabled: true
+  settings:
+    systemLogs:
+      ttl: 2 day
+      tables:
+        processorsProfileLog:
+          enabled: false
+        queryLog:
+          ttl: 1 hour
+server:
+  extraEnv:
+    - name: FOO
+      value: BAR
+ingester:
+  extraEnv:
+    - name: FOO
+      value: BAR
+  bucket:
+    uri: "s3://timescape/hubble-events?endpoint=https://minio.minio.svc.cluster.local&s3ForcePathStyle=true"
+    prefixPattern: "%Y/%m/%d"
+
+ui:
+  extraEnv:
+    - name: FOO
+      value: BAR
+  enabled: true
+  loadBalancing:
+    enabled: true
+    clusterRole:
+      labels:
+        test: my-label
+      annotations:
+        test: my-annotation
+    clusterRoleBinding:
+      labels:
+        test: my-label
+      annotations:
+        test: my-annotation
+  ingress:
+    enabled: true
+    tls:
+      enabled: true
+      secretName: hubble-timescape-ui-ingress-cert
+  extraVolumes:
+    - name: config
+      configMap:
+        name: config
+        items:
+        - key: config.yaml
+          path: config.yaml
+  extraVolumeMounts:
+    - mountPath: /etc/configs
+      name: config
+      readOnly: true
+
+  prometheus:
+    prometheusRule:
+      enabled: true
+
+  pprof:
+    enabled: true
+    address: "0.0.0.0"
+    port: 6060
+
+  podAnnotations:
+    phlare.grafana.com/scrape: "true"
+    phlare.grafana.com/port: "6060"
+
+tls:
+  enabled: true
+  auto:
+    enabled: true
+    method: certmanager
+    certmanager:
+      issuerRef:
+        group: cert-manager.io
+        kind: ClusterIssuer
+        name: selfsigned-ca-issuer
+  caBundle:
+    enabled: true
+    name: selfsigned-ca-bundle-override

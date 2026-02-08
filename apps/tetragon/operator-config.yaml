@@ -1,0 +1,118 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+# Complete Tetragon Operator ConfigMap
+# Generated from operator defaults + our customizations
+# Both agentConfigMap AND agentDaemonSet are REQUIRED
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tetragon-operator-config
+  namespace: tetragon
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+data:
+  agentConfigMap: |
+    # Enable Prometheus metrics on port 2112
+    metrics-server: ":2112"
+    # Standard config
+    procfs: /procRoot
+    enable-process-cred: "false"
+    enable-process-ns: "false"
+    process-cache-size: "65536"
+    # Process events export
+    export-filename: /var/run/cilium/hubble/tetragon.log
+    export-file-perm: "600"
+    export-file-max-size-mb: "10"
+    export-file-max-backups: "5"
+    export-file-compress: "false"
+    # Connection logs for Timescape (undocumented Tetragon Enterprise feature)
+    connection-log-filename: /var/run/cilium/hubble/tetragon-connections.log
+    # Enable TCP/UDP layer3 monitoring for connection logs
+    enable-tcp: "true"
+    enable-udp: "true"
+    export-allowlist: '{"event_set":["PROCESS_CONNECT", "PROCESS_EXEC", "PROCESS_EXIT", "PROCESS_CLOSE", "PROCESS_DNS"]}'
+    export-denylist: |-
+      {"health_check":true}
+      {"namespace":["", "cilium", "kube-system"]}
+    field-filters: '{}'
+    enable-k8s-api: "true"
+    enable-pod-info: "true"
+    enable-policy-filter: "true"
+    enable-policy-filter-debug: "false"
+    enable-tracing-policy-crd: "true"
+    enable-sandboxpolicies: "true"
+    enable-cilium-api: "false"
+    enable-msg-handling-latency: "false"
+    fim-fifo-path: /var/run/cilium/tetragon
+    fim-runtime-endpoint: ""
+    flow-export-file-compress: "false"
+    flow-export-file-max-backups: "5"
+    flow-export-file-max-size-mb: "10"
+    flow-export-filename: ""
+    gops-address: localhost:8118
+    export-rate-limit: "-1"
+  agentDaemonSet: |
+    dnsPolicy: Default
+    serviceAccountName: tetragon
+    hostNetwork: true
+    hostProcPath: /proc
+    imagePullPolicy: IfNotPresent
+    tolerations: |
+      - operator: Exists
+    nodeSelector:
+      kubernetes.io/os: linux
+    # Export to hubble directory for Timescape integration
+    exportDirectory: /var/run/cilium/hubble
+    ociHookSetupEnabled: false
+    ociHookSetupInterface: oci-hooks
+    ociHookSetupInstallDir: /opt/tetragon
+    ociHookSetupSecurityContext: |
+      privileged: true
+    ociHookFailAllowNamespaces:
+    metadataEnabled: false
+    enableCiliumAPI: false
+    metadataImagePullPolicy: Always
+    exportMode: ""
+    exportFileNames:
+      - tetragon.log
+      - tetragon-connections.log
+    tetragonEnabled: true
+    tetragonGrpcEnabled: true
+    tetragonGrpcAddress: "localhost:54321"
+    tetragonSecurityContext: |
+      privileged: true
+    tetragonHealthGrpcEnabled: true
+    tetragonHealthGrpcPort: "6789"
+    serviceMonitorEnabled: false
+    serviceMonitorScrapeInterval: 10s
+    serviceMonitorPrometheusPort: "2112"
+  aggregator: |
+    enabled: false
+    podSecurityContext: |
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - "ALL"
+    imagePullPolicy: IfNotPresent
+  force-update-crds: "false"
+  rtHooks: |
+    enabled: false
+    interface: "oci-hooks"
+    ociHooksPath: "/etc/containers/oci/hooks.d"
+    nriHookSocket: "/var/run/nri/nri.sock"
+    installDir: "/opt/tetragon"
+    annotations: {}
+    serviceAccountName: tetragon
+    priorityClassName: ""
+    securityContext: |
+      privileged: true
+    failAllowNamespaces: ""
+    extraHookArgs: {}
+  serviceMonitorEnabled: "false"
+  serviceMonitorPrometheusPort: "2113"
+  serviceMonitorScrapeInterval: 10s
+  skip-pod-info-crd: "false"
+  skip-policysandbox-crd: "false"
+  skip-tracing-policy-crd: "false"

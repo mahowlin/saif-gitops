@@ -1,0 +1,12 @@
+apiVersion: v2
+appVersion: 1.18.1
+dependencies:
+- alias: k8sExporter
+  condition: k8sExporter.enabled
+  name: hubble-k8s-exporter
+  repository: file://charts/hubble-k8s-exporter
+  version: '>0.0.0-0'
+description: Time Travel with Hubble Timescape
+name: hubble-timescape
+type: application
+version: 1.18.1

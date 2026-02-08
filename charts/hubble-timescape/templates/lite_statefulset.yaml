@@ -1,0 +1,73 @@
+{{- if .Values.lite.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "hubble-timescape-lite.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hubble-timescape-lite.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "hubble-timescape-lite.selectorLabels" . | nindent 6 }}
+  serviceName: {{ include "hubble-timescape-lite.service.name" . }}
+  template:
+    metadata:
+      {{- with include "hubble-timescape-lite.podAnnotations" . }}
+      annotations:
+        {{- . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "hubble-timescape-lite.podLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ .Values.lite.serviceAccount.name | quote }}
+      {{- $imagePullSecrets := .Values.lite.image.pullSecrets }}
+      {{- if .Values.lite.clickhouse.enabled }}
+      {{- $imagePullSecrets = concat $imagePullSecrets .Values.clickhouse.cluster.image.pullSecrets }}
+      {{- end }}
+      {{- with $imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.lite.podSecurityContext | nindent 8 }}
+      priorityClassName: {{ .Values.lite.priorityClassName }}
+      {{- if  not .Values.lite.clickhouse.enabled }}
+      initContainers: {{- include "hubble-timescape-migrate.container" . | nindent 8 }}
+      {{- end }}
+      containers:
+        {{- if .Values.lite.clickhouse.enabled }}
+        {{- include "hubble-timescape-clickhouse.containers" . | nindent 8 }}
+        {{- end }}
+        {{- include "hubble-timescape-lite.container" . | nindent 8 }}
+      volumes:
+        {{- include "hubble-timescape-lite.volumes" . | nindent 8 }}
+        {{- if .Values.lite.clickhouse.enabled }}
+        {{- include "hubble-timescape-clickhouse.volumes" . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.lite.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- $affinity := .Values.lite.affinity }}
+      {{- if .Values.lite.clickhouse.enabled }}
+        {{- $affinity = merge (include "hubble-timescape-lite.affinity" . | fromYaml ) $affinity -}}
+        {{/*
+        This is a hack to make merging `requiredDuringSchedulingIgnoredDuringExecution` work. The standard `merge` function does not merge lists but will completely replace it.
+        So to make it work we check if there are podAntiAffinity requirementes set and if they are we manually append them to the default.
+        */}}
+        {{- if dig "affinity" "podAntiAffinity" "requiredDuringSchedulingIgnoredDuringExecution" false .Values.lite }}
+          {{- $_ := set $affinity.podAntiAffinity  "requiredDuringSchedulingIgnoredDuringExecution"
+            (concat $affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution .Values.lite.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution) }}
+        {{- end }}
+      {{- end }}
+      {{- with $affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.lite.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

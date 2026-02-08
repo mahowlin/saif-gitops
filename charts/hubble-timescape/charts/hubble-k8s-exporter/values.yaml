@@ -1,0 +1,83 @@
+# -- Globally configure the log level. Valid values are: trace, debug, info,
+# warn and error.
+logLevel: info
+image:
+  repository: quay.io/isovalent/hubble-k8s-exporter
+  tag: "v1.18.1"
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+podAnnotations: {}
+podSecurityContext:
+  seccompProfile:
+    type: RuntimeDefault
+# fsGroup: 2000
+
+securityContext:
+  # What user to run as.
+  # Needs to be 'root' when exporting to '/var/run/cilium/hubble/k8s-events.log'
+  runAsUser: 0
+  seccompProfile:
+    type: RuntimeDefault
+# capabilities:
+#   drop:
+#   - ALL
+# readOnlyRootFilesystem: true
+# runAsNonRoot: true
+# runAsUser: 1000
+
+resources: {}
+# limits:
+#   cpu: 100m
+#   memory: 128Mi
+# requests:
+#   cpu: 100m
+#   memory: 128Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+extraVolumes: []
+extraVolumeMounts: []
+export:
+  # Cluster name to add to the exported events
+  clusterName: ""
+  # Absolute path of the export file location
+  filePath: "/var/run/cilium/hubble/k8s-events.log"
+  # Compress rotated files
+  fileCompression: true
+  # Interval at which to rotate JSON export files in addition to rotating them by size
+  fileRotationInterval: 0
+  # Maximum size of the file in megabytes
+  maxFileSize: 50
+  # Number of rotated files to keep
+  maxFileBackups: 3
+  # enable exporting CiliumNetworkPolicy and CiliumClusterwideNetworkPolicy events
+  ciliumNetworkPolicies: true
+  # enable exporting k8s NetworkPolicy events
+  k8sNetworkPolicies: true
+  # enable exporting k8s Endpoint events
+  k8sEndpoints: false
+  # enable exporting Cilium Endpoint events
+  ciliumEndpoints: false
+  # enable exporting Cilium Identity events
+  ciliumIdentities: true
+  # enable exporting TetragonNetworkPolicy events
+  tetragonNetworkPolicies: false
+  # enable exporting CiliumNode events
+  ciliumNodes: true
+  # enable exporting Tetragon Node events.
+  tetragonNodes: false
+  # enable exporting SmartSwitch events
+  smartSwitches: false
+  # enable exporting SmartSwitchNetworkPolicy events
+  smartSwitchNetworkPolicies: false

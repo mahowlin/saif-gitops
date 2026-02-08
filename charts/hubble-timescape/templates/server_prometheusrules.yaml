@@ -1,0 +1,32 @@
+{{- if and (or (and .Values.server.enabled .Values.server.prometheus.enabled) (and .Values.lite.enabled .Values.lite.prometheus.enabled)) .Values.server.prometheus.prometheusRule.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "hubble-timescape-server.name" . }}
+  namespace: {{ .Values.server.prometheus.prometheusRule.namespace | default .Release.Namespace }}
+  labels:
+    {{- include "hubble-timescape-server.labels" . | nindent 4 }}
+    {{- with .Values.server.prometheus.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  annotations:
+    {{- with .Values.server.prometheus.prometheusRule.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: HubbleTimescapeServer
+      rules:
+        - alert: 'TimescapeQueriesFailureRateHigh'
+          # Alert when >10% of queries are failing.
+          expr: |
+            sum(rate(timescape_clickhouse_queries_duration_seconds_count{status="error",namespace="{{ .Release.Namespace }}"}[10m])) by (namespace, cluster)
+            /
+            sum(rate(timescape_clickhouse_queries_duration_seconds_count{namespace="{{ .Release.Namespace }}"}[10m])) by (namespace, cluster) > 0.1
+          labels:
+            severity: warning
+          annotations:
+            summary: 'Hubble Timescape queries failure rate is high'
+            description:  'Hubble Timescape queries failure rate is {{`{{`}} printf "%.2f" $value {{`}}`}}.'
+            {{/* runbookURL: "https://docs.isovalent.com/operations-guide/features/hubble-timescape/runbooks.html#TimescapeQueriesFailureRateHigh" */}}
+{{- end }}

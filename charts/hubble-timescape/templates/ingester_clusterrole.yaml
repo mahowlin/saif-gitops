@@ -1,0 +1,10 @@
+{{- if and .Values.ingester.enabled .Values.ingester.k8sImporter.enabled (not .Values.lite.enabled) }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "hubble-timescape-ingester.fullname" . }}-k8s-importer
+  labels:
+    {{- include "hubble-timescape-ingester.labels" . | nindent 4 }}
+rules: {{- include "hubble-timescape-ingester.k8sImporter.clusterRole.rules" . | fromYamlArray | toYaml | nindent 2 }}
+{{- end }}

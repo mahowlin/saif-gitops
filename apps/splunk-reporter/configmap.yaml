@@ -1,0 +1,256 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dashboard-updater-script
+  namespace: splunk-reporter
+data:
+  update-dashboard-charts.sh: |
+    #!/bin/bash
+    # Dashboard Chart Updater for Splunk Observability Cloud
+    # PURE TELEMETRY - Zero static config, all data queried live
+    # If data unavailable, show "unknown" - never show stale values
+    set -euo pipefail
+
+    # Configuration
+    API_URL="${SPLUNK_API_URL:-https://api.us1.signalfx.com/v2}"
+    API_TOKEN="${SPLUNK_API_TOKEN:?SPLUNK_API_TOKEN required}"
+
+    # Chart IDs (these are Splunk chart identifiers, not data)
+    CHART_UCS_BLADE="G_3GseDA4AA"
+    CHART_ACI_VLAN="G_3GxjiA4AI"
+    CHART_STORAGE="G_3GsT9AwAA"
+    CHART_CPU="G__1vmrAwAI"
+    CHART_RAM="G__1xtlA0AA"
+    CHART_NODE_IP="G_5hDFpAwAA"
+    CHART_CILIUM="G_3HORhAwAA"
+    CHART_HUBBLE="G_3HIQCA0AI"
+    CHART_TETRAGON="G_3HKjIA0Ao"
+    # Forward % (G_3HMXfA0AE) and Drop % (G_3HIBwA0AE) are now SignalFlow charts
+    CHART_POLICIES="G_3HJBSA4AA"
+    CHART_OPENSHIFT="G_3HJKqAwAM"
+    CHART_KUBERNETES="G_3HOY3A4BE"
+    CHART_GPU_MODEL="G_3HXsgA0AA"
+    CHART_GPU_DRIVER="G_3HQcIAwAU"
+    CHART_CUDA="G_3HcPGA4Aw"
+    CHART_NIM="G_3HWNBAwAI"
+    CHART_LLM="G_3HRqSAwAA"
+
+    # Color scheme
+    BG_BLUE="#B3E5FC"
+    TEXT_BLUE="#01579B"
+    BG_RED="#FFCDD2"
+    TEXT_RED="#B71C1C"
+    BG_GREEN="#DCEDC8"
+    TEXT_GREEN="#33691E"
+    COLOR_READY="#2E7D32"
+
+    update_chart() {
+        local chart_id="$1"
+        local name="$2"
+        local html="$3"
+        local escaped_html
+        escaped_html=$(echo "$html" | sed 's/"/\\"/g')
+        curl -sf -X PUT "$API_URL/chart/$chart_id" \
+            -H "Content-Type: application/json" \
+            -H "X-SF-Token: $API_TOKEN" \
+            -d "{\"name\":\"$name\",\"options\":{\"type\":\"Text\",\"markdown\":\"$escaped_html\"}}" >/dev/null 2>&1 && \
+            echo "  [OK] $name" || echo "  [FAIL] $name"
+    }
+
+    make_chart_html() {
+        local section="$1"
+        local label="$2"
+        local value="$3"
+        local ready="${4:-}"
+        local font_size="${5:-6}"
+        local bg_color text_color
+        case "$section" in
+            infrastructure|isovalent) bg_color="$BG_BLUE"; text_color="$TEXT_BLUE" ;;
+            openshift) bg_color="$BG_RED"; text_color="$TEXT_RED" ;;
+            nvidia) bg_color="$BG_GREEN"; text_color="$TEXT_GREEN" ;;
+            *) bg_color="$BG_BLUE"; text_color="$TEXT_BLUE" ;;
+        esac
+        local ready_html=""
+        [ -n "$ready" ] && ready_html="<br/><font size=\"3\" color=\"$COLOR_READY\"><b>✓ $ready</b></font>"
+        local label_html=""
+        [ -n "$label" ] && label_html="<font size=\"4\" color=\"$text_color\">$label</font><br/>"
+        echo "<table width=\"100%\" height=\"100%\" cellpadding=\"8\"><tr><td valign=\"middle\" align=\"center\" bgcolor=\"$bg_color\">${label_html}<font size=\"$font_size\" color=\"$text_color\"><b>$value</b></font>$ready_html</td></tr></table>"
+    }
+
+    echo "=== Collecting cluster data (pure telemetry) ==="
+
+    # === INFRASTRUCTURE ===
+
+    # Get cluster name for context
+    CLUSTER_NAME=$(kubectl get infrastructure cluster -o jsonpath='{.status.infrastructureName}' 2>/dev/null | sed 's/-[a-z0-9]*$//' || echo "unknown")
+    echo "  Cluster: $CLUSTER_NAME"
+
+    # UCS Blade Model - static lookup (hardware doesn't change)
+    # All AI Pod blades are UCSX-210C-M7
+    case "$CLUSTER_NAME" in
+        ai-pod-1|ai-pod-2|ai-pod-3|ai-pod-4) UCS_BLADE="X210C-M7" ;;
+        *) UCS_BLADE="unknown" ;;
+    esac
+    echo "  UCS Blade: $UCS_BLADE"
+
+    # ACI VLAN - static lookup (network config doesn't change)
+    case "$CLUSTER_NAME" in
+        ai-pod-1) ACI_VLAN="700" ;;
+        ai-pod-2) ACI_VLAN="100" ;;
+        ai-pod-3) ACI_VLAN="702" ;;
+        ai-pod-4) ACI_VLAN="703" ;;
+        *) ACI_VLAN="unknown" ;;
+    esac
+    echo "  ACI VLAN: $ACI_VLAN"
+
+    # CPU Model - static lookup (all blades have same CPU)
+    # Intel Xeon Gold 6448Y (32 cores per socket, 2 sockets = 64 cores)
+    case "$CLUSTER_NAME" in
+        ai-pod-1|ai-pod-2|ai-pod-3|ai-pod-4) CPU_MODEL="Intel Xeon 6448Y" ;;
+        *) CPU_MODEL="unknown" ;;
+    esac
+    echo "  CPU: $CPU_MODEL"
+
+    # RAM - Total capacity from node (shows total, not utilization)
+    RAM_SIZE="unknown"
+    RAM_KI=$(kubectl get nodes -o jsonpath='{.items[0].status.capacity.memory}' 2>/dev/null | sed 's/Ki$//' || echo "")
+    if [ -n "$RAM_KI" ]; then
+        RAM_TOTAL_GB=$(awk "BEGIN {printf \"%.0f\", $RAM_KI/1024/1024}")
+        RAM_SIZE="${RAM_TOTAL_GB} GB"
+    fi
+    echo "  RAM: $RAM_SIZE"
+
+    # Node IP
+    NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null || echo "unknown")
+    echo "  Node IP: $NODE_IP"
+
+    # Storage - Total capacity from TopoLVM (shows total, not utilization)
+    STORAGE_VALUE="unknown"
+    DEVICE_CLASS=$(kubectl get lvmcluster -n openshift-storage lvmcluster -o jsonpath='{.spec.storage.deviceClasses[0].name}' 2>/dev/null || echo "")
+    OVERPROVISION=$(kubectl get lvmcluster -n openshift-storage lvmcluster -o jsonpath='{.spec.storage.deviceClasses[0].thinPoolConfig.overprovisionRatio}' 2>/dev/null || echo "1")
+    [ -z "$OVERPROVISION" ] && OVERPROVISION=1
+    if [ -n "$DEVICE_CLASS" ]; then
+        TOPOLVM_CAPACITY=$(kubectl get nodes -o json 2>/dev/null | jq -r ".items[0].metadata.annotations[\"capacity.topolvm.io/$DEVICE_CLASS\"]" || echo "")
+        if [ -n "$TOPOLVM_CAPACITY" ] && [ "$TOPOLVM_CAPACITY" != "null" ] && [ "$TOPOLVM_CAPACITY" != "0" ]; then
+            # Total capacity in TB (divide by overprovision ratio)
+            CAPACITY_TB=$(awk "BEGIN {printf \"%.1f\", ($TOPOLVM_CAPACITY/$OVERPROVISION)/1000/1000/1000/1000}")
+            STORAGE_VALUE="${CAPACITY_TB} TB"
+        fi
+    fi
+    echo "  Storage: $STORAGE_VALUE"
+
+    # === OPENSHIFT ===
+
+    # OpenShift Version - FIXED: use clusterversion resource
+    OCP_VERSION=$(oc get clusterversion version -o jsonpath='{.status.desired.version}' 2>/dev/null || echo "unknown")
+    echo "  OpenShift: $OCP_VERSION"
+
+    # Kubernetes Version
+    K8S_VERSION=$(kubectl get nodes -o jsonpath='{.items[0].status.nodeInfo.kubeletVersion}' 2>/dev/null || echo "unknown")
+    echo "  Kubernetes: $K8S_VERSION"
+
+    # === ISOVALENT ===
+
+    # Cilium
+    CILIUM_IMAGE=$(kubectl get pods -n cilium -l app.kubernetes.io/name=cilium-agent -o jsonpath='{.items[0].spec.containers[0].image}' 2>/dev/null || echo "")
+    CILIUM_VERSION=$(echo "$CILIUM_IMAGE" | sed -n 's/.*:\(v[^@]*\).*/\1/p' | sed 's/-cee\.[0-9]*$//')
+    [ -z "$CILIUM_VERSION" ] && CILIUM_VERSION="unknown"
+    CILIUM_READY="false"
+    kubectl get pods -n cilium -l app.kubernetes.io/name=cilium-agent -o jsonpath='{.items[*].status.phase}' 2>/dev/null | grep -q "Running" && CILIUM_READY="true"
+    echo "  Cilium: $CILIUM_VERSION (ready=$CILIUM_READY)"
+
+    # Hubble Timescape (show Timescape version, not Relay)
+    HUBBLE_IMAGE=$(kubectl get pods -n hubble-timescape -l app.kubernetes.io/name=hubble-timescape-server -o jsonpath='{.items[0].spec.containers[0].image}' 2>/dev/null || echo "")
+    HUBBLE_VERSION=$(echo "$HUBBLE_IMAGE" | sed -n 's/.*:\(v[^@]*\).*/\1/p')
+    [ -z "$HUBBLE_VERSION" ] && HUBBLE_VERSION="unknown"
+    HUBBLE_READY="false"
+    kubectl get pods -n hubble-timescape -l app.kubernetes.io/name=hubble-timescape-server -o jsonpath='{.items[*].status.phase}' 2>/dev/null | grep -q "Running" && HUBBLE_READY="true"
+    echo "  Hubble Timescape: $HUBBLE_VERSION (ready=$HUBBLE_READY)"
+
+    # Tetragon
+    TETRAGON_IMAGE=$(kubectl get pods -n tetragon -l app.kubernetes.io/name=tetragon -o jsonpath='{.items[0].spec.containers[0].image}' 2>/dev/null || echo "")
+    TETRAGON_VERSION=$(echo "$TETRAGON_IMAGE" | sed -n 's/.*:\(v[^@]*\).*/\1/p')
+    [ -z "$TETRAGON_VERSION" ] && TETRAGON_VERSION="unknown"
+    TETRAGON_READY="false"
+    kubectl get pods -n tetragon -l app.kubernetes.io/name=tetragon -o jsonpath='{.items[*].status.phase}' 2>/dev/null | grep -q "Running" && TETRAGON_READY="true"
+    echo "  Tetragon: $TETRAGON_VERSION (ready=$TETRAGON_READY)"
+
+    # Policies (CNP + CCNP)
+    CNP_COUNT="0"
+    CCNP_COUNT="0"
+    CNP_OUT=$(kubectl get ciliumnetworkpolicies -A --no-headers 2>/dev/null)
+    [ -n "$CNP_OUT" ] && CNP_COUNT=$(echo "$CNP_OUT" | wc -l | tr -d '[:space:]')
+    CCNP_OUT=$(kubectl get ciliumclusterwidenetworkpolicies --no-headers 2>/dev/null)
+    [ -n "$CCNP_OUT" ] && CCNP_COUNT=$(echo "$CCNP_OUT" | wc -l | tr -d '[:space:]')
+    POLICY_COUNT=$((CNP_COUNT + CCNP_COUNT))
+    echo "  Policies: $POLICY_COUNT (CNP: $CNP_COUNT, CCNP: $CCNP_COUNT)"
+
+    # Forward/Drop % - Now SignalFlow metric charts (not managed by CronJob)
+    # Charts G_3HMXfA0AE and G_3HIBwA0AE use cilium_forward_count_total / cilium_drop_count_total
+    echo "  Forward/Drop: SignalFlow charts (live metrics)"
+
+    # === NVIDIA ===
+
+    # GPU info from node labels (populated by NFD + GPU Operator)
+    GPU_MODEL=$(kubectl get nodes -o jsonpath='{.items[0].metadata.labels.nvidia\.com/gpu\.product}' 2>/dev/null | sed 's/-/ /g' || echo "unknown")
+    GPU_DRIVER=$(kubectl get nodes -o jsonpath='{.items[0].metadata.labels.nvidia\.com/cuda\.driver-version\.full}' 2>/dev/null || echo "unknown")
+    CUDA_VERSION=$(kubectl get nodes -o jsonpath='{.items[0].metadata.labels.nvidia\.com/cuda\.runtime-version\.full}' 2>/dev/null || echo "unknown")
+    echo "  GPU: $GPU_MODEL (Driver: $GPU_DRIVER, CUDA: $CUDA_VERSION)"
+
+    # === NIM / LLM ===
+
+    # NIM Version from NIMService spec - shows runtime version (not operator version)
+    NIM_VERSION=$(kubectl get nimservice -n nim-llm -o jsonpath='{.items[0].spec.image.tag}' 2>/dev/null || echo "unknown")
+    [ -z "$NIM_VERSION" ] && NIM_VERSION="unknown"
+
+    # NIM Pod ready - FIXED: correct label
+    NIM_READY="false"
+    kubectl get pods -n nim-llm -l app.kubernetes.io/part-of=nim-service -o jsonpath='{.items[*].status.phase}' 2>/dev/null | grep -q "Running" && NIM_READY="true"
+
+    # LLM Model - from NIMService CR status (strip org prefix)
+    LLM_MODEL=$(kubectl get nimservice -n nim-llm -o jsonpath='{.items[0].status.model.name}' 2>/dev/null | sed 's|.*/||' || echo "unknown")
+    [ -z "$LLM_MODEL" ] && LLM_MODEL="unknown"
+    echo "  NIM: $NIM_VERSION (ready=$NIM_READY), LLM: $LLM_MODEL"
+
+    echo ""
+    echo "=== Updating dashboard charts ==="
+
+    # Infrastructure (Blue)
+    update_chart "$CHART_UCS_BLADE" "UCS Blade" "$(make_chart_html infrastructure "Server Model" "$UCS_BLADE")"
+    update_chart "$CHART_ACI_VLAN" "ACI VLAN" "$(make_chart_html infrastructure "VLAN ID" "$ACI_VLAN")"
+    update_chart "$CHART_STORAGE" "Storage" "$(make_chart_html infrastructure "" "$STORAGE_VALUE" "" 8)"
+    # CPU now uses Single Value chart with SignalFlow (intersight.compute.blade.cpu_cores)
+    # update_chart "$CHART_CPU" "CPU" "$(make_chart_html infrastructure "Processor" "$CPU_MODEL")"
+    # RAM now uses Single Value chart with SignalFlow (intersight.compute.blade.memory_gb)
+    # update_chart "$CHART_RAM" "RAM" "$(make_chart_html infrastructure "Memory" "$RAM_SIZE")"
+    update_chart "$CHART_NODE_IP" "Node IP" "$(make_chart_html infrastructure "Primary Node" "$NODE_IP")"
+
+    # Isovalent (Blue)
+    CILIUM_READY_TEXT=""; [ "$CILIUM_READY" = "true" ] && CILIUM_READY_TEXT="Ready"
+    update_chart "$CHART_CILIUM" "Cilium Version" "$(make_chart_html isovalent "Cilium CNI" "$CILIUM_VERSION" "$CILIUM_READY_TEXT")"
+    HUBBLE_READY_TEXT=""; [ "$HUBBLE_READY" = "true" ] && HUBBLE_READY_TEXT="Ready"
+    update_chart "$CHART_HUBBLE" "Hubble Timescape" "$(make_chart_html isovalent "Hubble Timescape" "$HUBBLE_VERSION" "$HUBBLE_READY_TEXT")"
+    TETRAGON_READY_TEXT=""; [ "$TETRAGON_READY" = "true" ] && TETRAGON_READY_TEXT="Ready"
+    update_chart "$CHART_TETRAGON" "Tetragon Version" "$(make_chart_html isovalent "Tetragon" "$TETRAGON_VERSION" "$TETRAGON_READY_TEXT")"
+    # Forward % and Drop % are now SignalFlow charts - not updated by CronJob
+    update_chart "$CHART_POLICIES" "Policies" "$(make_chart_html isovalent "Network Policies" "$POLICY_COUNT")"
+
+    # OpenShift (Red)
+    OCP_READY_TEXT=""; [ "$OCP_VERSION" != "unknown" ] && OCP_READY_TEXT="Ready"
+    update_chart "$CHART_OPENSHIFT" "OpenShift Version" "$(make_chart_html openshift "OpenShift Container Platform" "$OCP_VERSION" "$OCP_READY_TEXT")"
+    update_chart "$CHART_KUBERNETES" "Kubernetes Version" "$(make_chart_html openshift "Kubernetes" "$K8S_VERSION")"
+
+    # NVIDIA (Green)
+    update_chart "$CHART_GPU_MODEL" "GPU Model" "$(make_chart_html nvidia "GPU" "$GPU_MODEL")"
+    update_chart "$CHART_GPU_DRIVER" "GPU Driver" "$(make_chart_html nvidia "Driver Version" "$GPU_DRIVER")"
+    update_chart "$CHART_CUDA" "CUDA Version" "$(make_chart_html nvidia "CUDA" "$CUDA_VERSION")"
+    NIM_READY_TEXT=""; [ "$NIM_READY" = "true" ] && NIM_READY_TEXT="Ready"
+    update_chart "$CHART_NIM" "NIM Status" "$(make_chart_html nvidia "NVIDIA NIM" "$NIM_VERSION" "$NIM_READY_TEXT")"
+    update_chart "$CHART_LLM" "LLM Model" "$(make_chart_html nvidia "Language Model" "$LLM_MODEL")"
+
+    echo ""
+    echo "=== Dashboard update complete ==="

@@ -1,0 +1,118 @@
+{{/* validate hubble-timescape config */}}
+{{- $serverTLS := merge dict .Values.server.tls .Values.tls -}}
+{{- $ingesterServerTLS := merge dict .Values.ingester.server.tls .Values.tls -}}
+{{- $serverTLSClientCA := .Values.server.tls.clientCA }}
+{{- if .Values.server.rbac.tls.clientCA.configMap.name }}
+{{- $serverTLSClientCA = .Values.server.rbac.tls.clientCA }}
+{{- end }}
+
+{{/* validate server mTLS */}}
+{{- if and $serverTLS .Values.server.tls.mtls.enabled }}
+  {{- if not $serverTLSClientCA.configMap.name }}
+  {{ fail "mTLS was enabled for Timescape server, but Client CA was not configured. Please set 'server.rbac.tls.clientCA.configMap.name' or 'server.tls.clientCA.configMap.name'." }}
+  {{- end }}
+{{- end }}
+
+{{/* validate ingester server auth method */}}
+{{- $authMethod := .Values.ingester.server.authMethod }}
+{{- $validAuthMethods := list "none" "basic-auth" "mtls" }}
+{{- if or (empty $authMethod) (not (has $authMethod $validAuthMethods)) }}
+{{ fail (printf "Invalid authentication method for Timescape ingester server, ingester.server.authMethod is %q, but must be one of \"none\", \"basic-auth\", or \"mtls\"." $authMethod) }}
+{{- end }}
+
+{{/* validate ingester server mTLS */}}
+{{- if and $ingesterServerTLS (eq .Values.ingester.server.authMethod "mtls") }}
+  {{- if not .Values.ingester.server.tls.clientCA.configMap.name }}
+  {{ fail "mTLS was enabled for Timescape ingester server, but Client CA was not configured. Please set 'ingester.server.tls.clientCA.configMap.name'." }}
+  {{- end }}
+{{- end }}
+
+{{/* validate RBAC */}}
+{{- if and .Values.server.rbac.enabled (not $serverTLS.enabled) }}
+{{ fail "RBAC was enabled, but TLS was not. Please enable TLS when RBAC is enabled." }}
+{{- end }}
+{{- if and .Values.server.rbac.enabled (has "oidc" (splitList "," .Values.server.rbac.authMethod)) }}
+  {{- if not .Values.server.rbac.oidcURL }}
+  {{ fail "RBAC was enabled with 'oidc' auth method, but issuer URL was not configured. Please set 'server.rbac.oidcURL'." }}
+  {{- end }}
+  {{- if not .Values.server.rbac.oidcClientID }}
+  {{ fail "RBAC was enabled with 'oidc' auth method, but Client ID was not configured. Please set 'server.rbac.oidcClientID'." }}
+  {{- end }}
+{{- end }}
+{{- if and .Values.server.rbac.enabled (has "tls" (splitList "," .Values.server.rbac.authMethod)) }}
+  {{- if not $serverTLSClientCA.configMap.name }}
+  {{ fail "RBAC was enabled with 'tls' auth method, but Client CA was not configured. Please set 'server.rbac.tls.clientCA.configMap.name' or 'server.tls.clientCA.configMap.name'." }}
+  {{- end }}
+{{- end }}
+
+{{/* validate clickhouse component settings */}}
+{{- $valuesDict :=  (.Values | merge (dict)) -}} {{/* hack to make "dig" work on .Values */}}
+{{- range $index, $element := (list "server" "ingester" "migrate" "trimmer") }}
+  {{- $componentClickhouse := dig $element "clickhouse" "" $valuesDict }}
+  {{- $globalClickhouse := $valuesDict.clickhouse }}
+  {{- $clickhouse := merge dict $componentClickhouse $globalClickhouse (dict "tls" $valuesDict.tls) }}
+
+  {{/* validate clickhouse username settings */}}
+  {{- $username := $componentClickhouse.credentials.username }}
+  {{- if eq $username "" }}
+    {{ printf "'.Values.%s.clickhouse.credentials.username' must be specified" $element | fail }}
+  {{- end }}
+  {{- if not ($username | regexMatch "^[a-z0-9_-]+$") }}
+    {{ printf "'.Values.%s.clickhouse.credentials.username=%s' must match regex ^[a-z0-9_-]+$" $element $username | fail }}
+  {{- end }}
+
+  {{- if and (not $clickhouse.client.dsn.host) (not $clickhouse.cluster.enabled) (not (and $valuesDict.lite.enabled $valuesDict.lite.clickhouse.enabled)) }}
+    {{ fail "Must either set clickhouse.client.dsn.host, clickhouse.cluster.enabled, or lite.enabled" }}
+  {{- end }}
+{{- end }}
+
+{{- if and .Values.lite.enabled .Values.lite.clickhouse.enabled }}
+  {{- $clickhouse := merge dict .Values.lite.clickhouse .Values.clickhouse }}
+  {{- if $clickhouse.client.dsn.host }}
+    {{ fail "Invalid configuration, clickhouse.client.dsn.host cannot be set when running Timescape Lite with local clickhouse" }}
+  {{- end }}
+  {{- if $clickhouse.cluster.enabled }}
+    {{ fail "Invalid configuration, clickhouse.cluster.enabled cannot be true when running Timescape Lite with local clickhouse" }}
+  {{- end }}
+  {{- if $clickhouse.tls.enabled }}
+    {{ fail "Invalid configuration, TLS is not supported when running Timescape Lite with local clickhouse" }}
+  {{- end }}
+{{- end }}
+
+{{/* validate clickhouse user profiles settings */}}
+{{- range $index, $element := (list "admin" "readWrite" "readOnly") }}
+  {{- $rolename := dig "clickhouse" "userProfiles" $element "name" "" $valuesDict }}
+  {{- if eq $rolename "" }}
+    {{ printf "'.Values.clickhouse.userProfiles.%s.name' must be specified" $element | fail }}
+  {{- end }}
+  {{- if not ($rolename | regexMatch "^[a-z0-9_-]+$") }}
+    {{ printf "'.Values.clickhouse.userProfiles.%s.name=%s' must match regex ^[a-z0-9_-]+$" $element $rolename | fail }}
+  {{- end }}
+{{- end }}
+
+{{/* validate clickhouse cluster settings */}}
+{{- if .Values.clickhouse.cluster.enabled }}
+  {{- $configuredProvider := .Values.clickhouse.cluster.provider }}
+  {{- $supportedProviders := list "altinity-clickhouse-operator" }}
+  {{- $validProvider := false }}
+  {{- range $element := $supportedProviders }}
+    {{- if (eq $configuredProvider $element) }}
+      {{- $validProvider = true }}
+    {{- end }}
+  {{- end }}
+  {{- if not $validProvider }}
+    {{- printf "clickhouse.cluster.enabled=true, but clickhouse.cluster.provider=%s is invalid, supported values: %s" $configuredProvider $supportedProviders | fail }}
+  {{- end }}
+{{- end }}
+
+{{/* validate clickhouse client settings */}}
+{{- $compression := .Values.clickhouse.client.dsn.compression.method }}
+{{- $validCompressions := list "none" "lz4" "zstd" }}
+{{- if and $compression (not (has $compression  $validCompressions))}}
+{{ fail (printf "Invalid configuration, clickhouse.client.dsn.compression.method is %q, but must be one of \"none\", \"lz4\", or \"zstd\"." $compression) }}
+{{- end }}
+
+{{/* validate bucket settings */}}
+{{- if and .Values.ingester.bucket.uri .Values.config.buckets }}
+{{ fail "Invalid configuration, ingester.bucket.uri and config.buckets are mutually exclusive" }}
+{{- end }}

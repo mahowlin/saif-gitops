@@ -1,0 +1,89 @@
+operator:
+  replicas: 1
+  upgradeCRD: true
+  image:
+    repository: nvcr.io/nvidia/cloud-native/k8s-nim-operator
+    tag: v3.0.2
+    pullSecrets: []
+    pullPolicy: Always
+  args:
+    - --health-probe-bind-address=:8081
+    - --metrics-bind-address=:8080
+    - --leader-elect
+  log:
+    # Enable development mode
+    development: false
+    # Log verbosity level (debug | info | warn | error | dpanic | panic | fatal)
+    level: info
+    # Stacktrace generation level (debug | info | warn | error | dpanic | panic | fatal)
+    stacktraceLevel: error
+    # Log encoder format (json|console)
+    encoder: json
+  resources:
+      limits:
+        cpu: "1"
+        memory: 256Mi
+      requests:
+        cpu: 500m
+        memory: 128Mi
+  nodeSelector: {}
+  annotations: {}
+  podAnnotations: {}
+  tolerations:
+  - key: "node-role.kubernetes.io/control-plane"
+    operator: "Equal"
+    value: ""
+    effect: "NoSchedule"
+  affinity:
+    nodeAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 1
+          preference:
+            matchExpressions:
+              - key: "node-role.kubernetes.io/control-plane"
+                operator: In
+                values: [""]
+  podSecurityContext:
+    seccompProfile:
+      # Required for VMWare TKGS platform
+      type: RuntimeDefault
+    runAsNonRoot: true
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+  admissionController:
+    # Enable the admission controller. 
+    # Note: cert-manager must be installed beforehand, as it is required to generate the TLS certificates.
+    enabled: false
+    # TLS certificate configuration
+    tls:
+      # Certificate management mode: "cert-manager" or "secret"
+      # - "cert-manager": Use cert-manager to automatically generate and manage certificates
+      # - "secret": Use a user-provided secret containing tls.crt and tls.key
+      mode: "cert-manager"
+      certManager:
+        # Issuer type: "selfsigned", "clusterissuer", or "issuer"
+        issuerType: "selfsigned"
+        # Issuer name (required when issuerType is "clusterissuer" or "issuer")
+        issuerName: ""
+        # Additional DNS names for the certificate
+        dnsNames: []
+      secret:
+        # Name of the secret containing tls.crt and tls.key
+        name: ""
+        # Base64-encoded CA certificate bundle for validating the webhook's TLS certificate (base64 encoded)
+        # Required when using secret mode.
+        # Note: Only include intermediate CA certificates, not root CA certificates
+        caBundle:
+metricsService:
+  ports:
+  - name: metrics
+    port: 8080
+    protocol: TCP
+  type: ClusterIP
+
+nfd:
+  nodeFeatureRules:
+    deviceID: false

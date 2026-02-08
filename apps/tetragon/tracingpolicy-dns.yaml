@@ -1,0 +1,22 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+# DNS Visibility TracingPolicy
+# Enables process_dns events to see all DNS queries from pods
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicy
+metadata:
+  name: dns-visibility
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  parser:
+    udp:
+      enable: true
+      cgroup: true
+      deleteIdleSocketInterval: 60
+    dns:
+      enable: true
+      ports:
+        - 53

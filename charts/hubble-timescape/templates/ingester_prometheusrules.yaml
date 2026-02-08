@@ -1,0 +1,128 @@
+{{- if and (or (and .Values.ingester.enabled .Values.ingester.prometheus.enabled) (and .Values.lite.enabled .Values.lite.prometheus.enabled)) .Values.ingester.prometheus.prometheusRule.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "hubble-timescape-ingester.name" . }}
+  namespace: {{ .Values.ingester.prometheus.prometheusRule.namespace | default .Release.Namespace }}
+  labels:
+    {{- include "hubble-timescape-ingester.labels" . | nindent 4 }}
+    {{- with .Values.ingester.prometheus.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  annotations:
+    {{- with .Values.ingester.prometheus.prometheusRule.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: HubbleTimescapeIngester
+      rules:
+        - alert: TimescapeIngestionDurationHigh
+          # Alert when the p95 of ingest cycles is taking longer than 5 minutes
+          # Any longer and it indicates that tuning is needed.
+          expr: |
+            histogram_quantile(0.95,
+              sum(rate(timescape_ingester_ingest_duration_seconds_bucket{namespace="{{ .Release.Namespace }}"}[5m])
+            ) by (le, namespace, cluster))
+            # 5 minute grace period. This value needs tuning based on
+            # scheduleInterval, TTL, and total flow export rate.
+            > {{ .Values.ingester.prometheus.prometheusRule.rules.TimescapeIngestionDurationHigh.gracePeriod | default "5m" | include "durationSeconds" }}
+          labels:
+            severity: info
+          annotations:
+            summary: 'Hubble Timescape ingestion taking too long'
+            description:  'Hubble Timescape P95 of ingestions is taking {{`{{`}} $value | humanizeDuration {{`}}`}}'
+            # Link to docs for how to handle various alerts.
+            # Suggest tuning batchSize, and/or scheduleInterval.
+            runbook_url: "https://docs.isovalent.com/operations-guide/features/hubble-timescape/monitoring/runbooks/ingester.html#timescapeingestiondurationhigh"
+          for: '5m'
+
+        {{/* Generate the types of events to alert on stale data for */}}
+        {{- $eventTypes := list -}}
+        {{- if .Values.ingester.flows.enabled -}}
+        {{- $eventTypes = append $eventTypes "flows" -}}
+        {{- end -}}
+        {{- $eventTypesStrRegex := $eventTypes | join "|" }}
+        - alert: TimescapeEventDataStale
+          expr: |
+            # "Staleness" is the difference between the current time and timestamp of the newest event
+            time() -
+              # Get the max timestamp value for each installation of Timescape
+             max(
+              # events are not processed in order, so the timestamp may go up
+              # and down, so use max_over_time to get the "newest" events ingested
+              # We then filter out zero values as this implies that we never ingested
+              # anything for that event_type
+              max_over_time(timescape_ingester_inserter_last_event_timestamp{namespace="{{ .Release.Namespace }}", event_type=~"{{ $eventTypesStrRegex }}"}[1h]) != 0
+            ) by (namespace, cluster, event_type)
+            {{- if .Values.ingester.prometheus.prometheusRule.rules.TimescapeEventDataStale.gracePeriod }}
+            # Configured via .ingester.prometheus.prometheusRule.rules.TimescapeEventDataStale.gracePeriod
+            > {{ .Values.ingester.prometheus.prometheusRule.rules.TimescapeEventDataStale.gracePeriod | include "durationSeconds" }}
+            {{- else }}
+            # The gracePeriod is 3x the scheduleInterval.
+            # We pick 3x instead of 2x because it accounts for if the export
+            # We generally recommend an schedule interval equal to or less than
+            # the export interval to minimize latency, however if they are both
+            # the same, and while running, the export interval aligns with the
+            # schedule interval then events might be delayed by the full
+            # scheduleInterval + exportInterval which would be 2x the
+            # scheduleInterval exactly, so we need some additional room for
+            # delays, so we use 3x.
+            > (3 * {{ .Values.ingester.scheduleInterval | include "durationSeconds" }})
+            {{- end }}
+          for: '5m'
+          labels:
+            severity: warning
+          annotations:
+            summary: 'Hubble Timescape event data may be stale'
+            {{- $staleReason := "which is more than 3x longer the schedule interval"}}
+            {{- if .Values.ingester.prometheus.prometheusRule.rules.TimescapeEventDataStale.gracePeriod }}
+            {{- $staleReason = (printf "which is more than configured gracePeriod %d seconds" .Values.ingester.prometheus.prometheusRule.rules.TimescapeEventDataStale.gracePeriod) }}
+            {{- end }}
+            description:  'The newest {{`{{`}} $labels.event_type {{`}}`}} event seen is {{`{{`}} humanizeDuration $value {{`}}`}} old {{ $staleReason }}'
+            # Link to docs for how to handle various alerts.
+            runbook_url: "https://docs.isovalent.com/operations-guide/features/hubble-timescape/monitoring/runbooks/ingester.html#timescapeeventdatastale"
+
+        {{ $notIngestingWindow := mul 3 (include "durationSeconds" .Values.ingester.scheduleInterval) | duration }}
+        - alert: TimescapeNotIngesting
+          expr: |
+            sum(rate(timescape_ingester_inserter_events_ingested_sum{namespace="{{ .Release.Namespace }}"}[{{ $notIngestingWindow }}])) by (namespace, cluster) == 0
+          labels:
+            severity: critical
+          annotations:
+            summary: 'Hubble Timescape has not ingested any events for {{ $notIngestingWindow }}'
+            description:  'Hubble Timescape ingestion rate is 0 events in {{ $notIngestingWindow }}'
+            # Link to docs for how to handle various alerts.
+            runbook_url: "https://docs.isovalent.com/operations-guide/features/hubble-timescape/monitoring/runbooks/ingester.html#timescapenotingesting"
+          for: '5m'
+
+        - alert: TimescapeIngestionRateLow
+          # 1 day ingestion rate is lower than the 75% of the 7 day rate, so
+          # the last 24 hours are "atypical" if this fires
+          expr: |
+            sum(rate(timescape_ingester_inserter_events_ingested_sum{namespace="{{ .Release.Namespace }}"}[1d])) by (namespace, cluster) <
+            sum(rate(timescape_ingester_inserter_events_ingested_sum{namespace="{{ .Release.Namespace }}"}[7d])) by (namespace, cluster) * 0.75
+          labels:
+            severity: info
+          annotations:
+            summary: 'Hubble Timescape avg ingestion rate is lower than the last 7 days'
+            description:  'Hubble Timescape ingestion rate is low: {{`{{`}} printf "%.1f flows/second" $value {{`}}`}} over 24 hours compared to the last 7 days'
+            # Link to docs for how to handle various alerts.
+            runbook_url: "https://docs.isovalent.com/operations-guide/features/hubble-timescape/monitoring/runbooks/ingester.html#timescapeingestionratelow"
+          for: '5m'
+
+        - alert: TimescapeIngestionRateHigh
+          # 1 day ingestion rate is higher than the 125% of the 7 day rate, so
+          # the last 24 hours are "atypical" if this fires
+          expr: |
+            sum(rate(timescape_ingester_inserter_events_ingested_sum{namespace="{{ .Release.Namespace }}"}[1d])) by (namespace, cluster) >
+            sum(rate(timescape_ingester_inserter_events_ingested_sum{namespace="{{ .Release.Namespace }}"}[7d])) by (namespace, cluster) * 1.25
+          labels:
+            severity: info
+          annotations:
+            summary: 'Hubble Timescape avg ingestion rate is higher than the last 7 days'
+            description:  'Hubble Timescape ingestion rate is high: {{`{{`}} printf "%.1f flows/second" $value {{`}}`}} over 24 hours compared to the last 7 days'
+            # Link to docs for how to handle various alerts.
+            runbook_url: "https://docs.isovalent.com/operations-guide/features/hubble-timescape/monitoring/runbooks/ingester.html#timescapeingestionratehigh"
+          for: '5m'
+{{- end }}

@@ -1,0 +1,23 @@
+{{- if and .Values.lite.enabled .Values.lite.prometheus.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "hubble-timescape-lite.name" . }}-metrics
+  namespace: {{ .Release.Namespace }}
+  labels:
+    container: timescape
+    {{- include "hubble-timescape-lite.labels" . | nindent 4 }}
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: {{ .Values.lite.prometheus.port | quote }}
+spec:
+  ports:
+    - name: metrics
+      port: {{ .Values.lite.prometheus.port }}
+      targetPort: metrics
+      protocol: TCP
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    {{- include "hubble-timescape-lite.selectorLabels" . | nindent 4 }}
+{{- end }}

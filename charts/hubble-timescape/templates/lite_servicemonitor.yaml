@@ -1,0 +1,29 @@
+{{- if and .Values.lite.enabled .Values.lite.prometheus.enabled .Values.lite.prometheus.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "hubble-timescape-lite.name" . }}-metrics
+  namespace: {{ .Values.lite.prometheus.serviceMonitor.namespace | default .Release.Namespace }}
+  labels:
+    {{- include "hubble-timescape-lite.labels" . | nindent 4 }}
+    {{- with .Values.lite.prometheus.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  annotations:
+    {{- with .Values.lite.prometheus.serviceMonitor.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      container: timescape
+      {{- include "hubble-timescape-lite.selectorLabels" . | nindent 6 }}
+  namespaceSelector:
+    matchNames:
+    - {{ .Release.Namespace }}
+  endpoints:
+  - port: metrics
+    interval: {{ .Values.lite.prometheus.serviceMonitor.scrapeInterval | quote }}
+    honorLabels: true
+    path: /metrics
+{{- end }}

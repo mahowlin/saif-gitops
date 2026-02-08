@@ -1,0 +1,73 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+{{- if .Values.ciliumConfig.enabled }}
+# PostSync Hook - Restart Cilium agents after CiliumConfig changes
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cilium-restart-{{ .Release.Revision }}
+  namespace: cilium
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+spec:
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      serviceAccountName: cilium-restart-sa
+      restartPolicy: Never
+      containers:
+        - name: restart
+          image: registry.example.com:5000/openshift4/ose-tools-rhel9:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Restarting Cilium DaemonSet to pick up CiliumConfig changes..."
+              oc rollout restart daemonset/cilium -n cilium
+              echo "Waiting for rollout to complete..."
+              oc rollout status daemonset/cilium -n cilium --timeout=300s
+              echo "Cilium restart complete."
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cilium-restart-sa
+  namespace: cilium
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cilium-restart-role
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+rules:
+  - apiGroups: ["apps"]
+    resources: ["daemonsets"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cilium-restart-binding
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cilium-restart-role
+subjects:
+  - kind: ServiceAccount
+    name: cilium-restart-sa
+    namespace: cilium
+{{- end }}

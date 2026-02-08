@@ -1,0 +1,31 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+{{- if .Values.bgp.enabled }}
+# CiliumBGPPeeringPolicy - BGP peering for IP advertisement
+apiVersion: cilium.io/v2alpha1
+kind: CiliumBGPPeeringPolicy
+metadata:
+  name: {{ .Values.clusterName }}-bgp-policy
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  virtualRouters:
+    - localASN: {{ .Values.bgp.localASN }}
+      exportPodCIDR: {{ .Values.bgp.exportPodCIDR }}
+      {{- if .Values.bgp.serviceSelector }}
+      serviceSelector:
+        matchLabels:
+          {{- toYaml .Values.bgp.serviceSelector | nindent 10 }}
+      {{- end }}
+      neighbors:
+        {{- range .Values.bgp.neighbors }}
+        - peerAddress: {{ .address | quote }}
+          peerASN: {{ .asn }}
+          {{- if .port }}
+          peerPort: {{ .port }}
+          {{- end }}
+        {{- end }}
+{{- end }}

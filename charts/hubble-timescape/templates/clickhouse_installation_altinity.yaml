@@ -1,0 +1,548 @@
+{{- if and .Values.clickhouse.cluster.enabled (eq .Values.clickhouse.cluster.provider "altinity-clickhouse-operator") }}
+{{- $tls := merge dict .Values.clickhouse.tls .Values.tls -}}
+apiVersion: "clickhouse.altinity.com/v1"
+kind: "ClickHouseInstallation"
+metadata:
+  name: "hubble-timescape"
+  namespace: {{ .Release.Namespace }}
+  labels:
+    # clickhouse-operator will also add its own set of labels
+    {{- include "hubble-timescape-clickhouse.labels" . | nindent 4 }}
+spec:
+  defaults:
+    templates:
+      podTemplate: pod-template
+      serviceTemplate: svc-template
+  configuration:
+    files:
+      config.d/tablemetrics.xml: |-
+        <clickhouse>
+          <http_handlers>
+            <rule>
+              <url>/isovalent/metrics/table</url>
+              <methods>GET</methods>
+              <handler>
+                <type>predefined_query_handler</type>
+                <query>
+                  {{ include "hubble-timescape-clickhouse.tablemetrics-queries" . | nindent 18 }}
+                </query>
+              </handler>
+            </rule>
+            <!-- keep the default handlers such as query, play, ping -->
+            <defaults/>
+          </http_handlers>
+        </clickhouse>
+{{- if .Values.clickhouse.settings.storage.s3.enabled }}
+      config.d/s3.xml: |-
+        <clickhouse>
+          <storage_configuration>
+            <disks>
+              <s3>
+                <type>s3</type>
+  {{- with $s3 := .Values.clickhouse.settings.storage.s3 }}
+    {{- $s3Endpoint := "" }}
+    {{- $s3Path := "" }}
+    {{- if $s3.path }}
+      {{- $s3Path = printf "%s/" (clean $s3.path) }}
+    {{- end }}
+    {{- if $s3.endpoint }}
+      {{- $s3Scheme := ternary "https" "http" $s3.tls.enabled }}
+      {{- if .usePathStyleAccess }}
+        {{- /* path style access, eg minio/self-hosted object storage */ -}}
+        {{- $s3Endpoint = printf "%s://%s" $s3Scheme (list $s3.endpoint $s3.bucket $s3Path | join "/") }}
+      {{- else }}
+        {{- /* subdomain style access */ -}}
+        {{- $s3Endpoint = printf "%s://%s.%s" $s3Scheme $s3.bucket (list $s3.endpoint $s3Path | join "/") }}
+      {{- end }}
+    {{- else }}
+      {{- /* default to AWS public endpoints if endpoint is not set */ -}}
+      {{- $s3Endpoint = printf "https://%s.s3.%s.amazonaws.com/%s" $s3.bucket $s3.region $s3Path }}
+    {{- end }}
+                <endpoint>{{ $s3Endpoint }}</endpoint>
+                <region>{{ .region }}</region>
+                <support_batch_delete>true</support_batch_delete>
+                <use_environment_credentials>true</use_environment_credentials>
+                <metadata_path>/var/lib/clickhouse/disks/s3/</metadata_path>
+              </s3>
+              {{- if .cache.enabled }}
+              <s3_cache>
+                <type>cache</type>
+                <disk>s3</disk>
+                <path>/var/lib/clickhouse/disks/s3_cache/</path>
+                <max_size>{{ .cache.maxSize }}</max_size>
+              </s3_cache>
+              {{- end }}
+            </disks>
+            <policies>
+              <s3>
+                <volumes>
+                  <main>
+                    <disk>s3</disk>
+                  </main>
+                </volumes>
+              </s3>
+              {{- if .cache.enabled }}
+              <s3_cache>
+                <volumes>
+                  <main>
+                    <disk>s3_cache</disk>
+                  </main>
+                </volumes>
+              </s3_cache>
+              {{- end }}
+            </policies>
+          </storage_configuration>
+        </clickhouse>
+  {{- end }}
+{{- end }}
+      users.d/timescape_roles.xml: |-
+        <clickhouse>
+          <roles>
+            <timescape_admin_role>
+              <grants>
+                <!-- Migrate needs to be able to create, update, delete and modify tables as well as create the database to use. -->
+                <query>
+                  GRANT CREATE DATABASE,DROP DATABASE,
+                  CREATE TABLE,DROP TABLE,
+                  CREATE VIEW,DROP VIEW,
+                  CREATE DICTIONARY,DROP DICTIONARY,
+                  ALTER,
+                  SELECT,INSERT,TRUNCATE,OPTIMIZE,SHOW
+                  ON hubble.*
+                </query>
+                <!--
+                GRANT remote is globally scoped and cannot be done on a DB level, which is why ON specifies *.*
+                Additionally, we do not include WITH REPLACE OPTION, since this appends to the grants done previously.
+                -->
+                <query>GRANT REMOTE ON *.* </query>
+                <!--
+                Newer versions of clickhouse (eg: 24.3 LTS) now requires permissions to access system tables.
+                https://github.com/ClickHouse/ClickHouse/pull/38970
+                -->
+                <query>GRANT SELECT ON system.*</query>
+              </grants>
+            </timescape_admin_role>
+            <timescape_trimmer_role>
+              <grants>
+                <!-- Trimmer needs SELECT to query for events, and ALTER DELETE to remove events. -->
+                <query>GRANT SELECT,ALTER DELETE ON hubble.*</query>
+                <query>GRANT SELECT ON system.mutations</query>
+              </grants>
+            </timescape_trimmer_role>
+            <timescape_readwrite_role>
+              <grants>
+                <!-- Ingester needs SELECT to read from the ingestion log and INSERT to write into tables. -->
+                <query>GRANT SELECT,INSERT ON hubble.*</query>
+              </grants>
+            </timescape_readwrite_role>
+            <timescape_readonly_role>
+              <grants>
+                <!-- Server only needs SELECT to query events -->
+                <query>GRANT SELECT ON hubble.*</query>
+              </grants>
+            </timescape_readonly_role>
+          </roles>
+        </clickhouse>
+    clusters:
+    - name: "hubble-data"
+      layout:
+        shardsCount: 1
+      {{- if $tls.enabled }}
+      secure: "True"
+      insecure: "False"
+      secret:
+        auto: "True"
+      {{- end }}
+    settings:
+      logger/level: {{ .Values.clickhouse.settings.logger.level }}
+      max_concurrent_queries: {{ .Values.clickhouse.settings.maxConcurrentQueries }}
+      max_connections: {{ .Values.clickhouse.settings.maxConnections }}
+      merge_tree/max_suspicious_broken_parts: {{ .Values.clickhouse.settings.maxSuspiciousBrokenParts }}
+      {{- range $key, $table := .Values.clickhouse.settings.systemLogs.tables }}
+      {{- $defaultEnabled := $.Values.clickhouse.settings.systemLogs.enabled }}
+      {{- $defaultTTL := $.Values.clickhouse.settings.systemLogs.ttl | default "3 day" }}
+      {{- if eq $key "queryLog" }}
+        {{- if not (eq $.Values.clickhouse.settings.queryLog.enabled nil) }}
+          {{- $defaultEnabled = $.Values.clickhouse.settings.queryLog.enabled }}
+        {{- end }}
+        {{- if $.Values.clickhouse.settings.queryLog.ttlDays }}
+          {{- $defaultTTL = (printf "%.0f day" $.Values.clickhouse.settings.queryLog.ttlDays) }}
+        {{- end }}
+      {{- end }}
+      {{- if or (and $defaultEnabled (eq $table.enabled nil)) $table.enabled }}
+      {{ $key | snakecase }}/engine: _removed_
+      {{ $key | snakecase }}/ttl: {{ $table.column | default "event_time" }} + INTERVAL {{ $table.ttl | default $defaultTTL }}
+      {{- else }}
+      {{ $key | snakecase }}: _removed_
+      {{- end }}
+      {{- end }}
+      max_table_size_to_drop: 0
+      prometheus/endpoint: /metrics
+      prometheus/port: 8001
+      prometheus/metrics: true
+      prometheus/events: true
+      prometheus/asynchronous_metrics: true
+      mysql_port: _removed_
+      postgresql_port: _removed_
+      {{- if $tls.enabled }}
+      # Options below are based on
+      # https://github.com/Altinity/clickhouse-operator/blob/77025ca8d774b46d8381f5b45b92275d28fb2d45/tests/e2e/manifests/chi/test-033-tls.yaml
+      # and https://clickhouse.com/docs/en/guides/sre/configuring-ssl/
+
+      # enable secure ports, disable insecure ports
+      tcp_port: _removed_
+      tcp_port_secure: 9440
+      http_port: _removed_
+      https_port: 8443
+      interserver_http_port: _removed_
+      interserver_https_port: 9009
+
+      # server TLS settings
+      openSSL/server/certificateFile: "/etc/clickhouse-server/tls/tls.crt"
+      openSSL/server/privateKeyFile: "/etc/clickhouse-server/tls/tls.key"
+      {{- if $tls.ca.configMap.name }}
+      openSSL/server/caConfig: "/etc/clickhouse-server/ca/ca.crt"
+      {{- end }}
+      openSSL/server/loadDefaultCAFile: false
+      # none means we aren't requesting client certificates from clients
+      openSSL/server/verificationMode: "none"
+      openSSL/server/disableProtocols: "sslv2,sslv3,tlsv1,tlsv1_1,tlsv1_2"
+      openSSL/server/dhParamsFile: _removed_
+      openSSL/server/preferServerCiphers: false
+      openSSL/server/requireTLSv1: false
+      openSSL/server/requireTLSv1_1: false
+      openSSL/server/requireTLSv1_2: false
+      openSSL/server/requireTLSv1_3: true
+      openSSL/server/cacheSessions: true
+      {{- end }}
+
+      # client TLS settings
+      {{- if $tls.ca.configMap.name }}
+      # custom CA
+      openSSL/client/caConfig: "/etc/clickhouse-server/ca/ca.crt"
+      openSSL/client/loadDefaultCAFile: false
+      {{- else }}
+      # needed for ClickHouse to use public services, eg: S3
+      openSSL/client/loadDefaultCAFile: true
+      {{- end }}
+
+      openSSL/client/cacheSessions: true
+      openSSL/client/disableProtocols: "sslv2,sslv3,tlsv1,tlsv1_1,tlsv1_2"
+      openSSL/client/preferServerCiphers: true
+      # strict verifies the server cert when configured on the client
+      openSSL/client/verificationMode: "strict"
+      openSSL/client/invalidCertificateHandler/name: RejectCertificateHandler
+      {{- if .Values.clickhouse.settings.extraConfig }}
+      {{- .Values.clickhouse.settings.extraConfig | toYaml | nindent 6 }}
+      {{- end }}
+    profiles:
+      {{ .Values.clickhouse.userProfiles.admin.name }}/readonly: 0      # allow all queries       (SELECT, SHOW, DESCRIBE, EXISTS, INSERT, OPTIMIZE, SET, USE)
+      {{ .Values.clickhouse.userProfiles.admin.name }}/allow_ddl: 1     # allow DDL queries       (CREATE, ALTER, RENAME, ATTACH, DETACH, DROP, TRUNCATE)
+      {{ .Values.clickhouse.userProfiles.admin.name }}/log_queries: 1
+      {{ .Values.clickhouse.userProfiles.admin.name }}/skip_unavailable_shards: 1
+      {{ .Values.clickhouse.userProfiles.admin.name }}/prefer_global_in_and_join: 1
+      # disable the query profiler due to us hitting https://github.com/ClickHouse/ClickHouse/issues/15638 on some arm64 hosts
+      {{ .Values.clickhouse.userProfiles.admin.name }}/query_profiler_cpu_time_period_ns: "0"
+      {{ .Values.clickhouse.userProfiles.admin.name }}/query_profiler_real_time_period_ns: "0"
+      {{- if .Values.clickhouse.userProfiles.admin.maxMemoryUsage }}
+      {{ .Values.clickhouse.userProfiles.admin.name }}/max_memory_usage: {{ .Values.clickhouse.userProfiles.admin.maxMemoryUsage }}
+      {{- end }}
+      {{ .Values.clickhouse.userProfiles.readWrite.name }}/readonly: 0  # allow all queries       (SELECT, SHOW, DESCRIBE, EXISTS, INSERT, OPTIMIZE, SET, USE)
+      {{ .Values.clickhouse.userProfiles.readWrite.name }}/allow_ddl: 0 # disallow DDL queries    (CREATE, ALTER, RENAME, ATTACH, DETACH, DROP, TRUNCATE)
+      {{ .Values.clickhouse.userProfiles.readWrite.name }}/log_queries: 1
+      {{ .Values.clickhouse.userProfiles.readWrite.name }}/skip_unavailable_shards: 1
+      # disable the query profiler due to us hitting https://github.com/ClickHouse/ClickHouse/issues/15638 on some arm64 hosts
+      {{ .Values.clickhouse.userProfiles.readWrite.name }}/query_profiler_cpu_time_period_ns: "0"
+      {{ .Values.clickhouse.userProfiles.readWrite.name }}/query_profiler_real_time_period_ns: "0"
+      {{- if .Values.clickhouse.userProfiles.readWrite.maxMemoryUsage }}
+      {{ .Values.clickhouse.userProfiles.readWrite.name }}/max_memory_usage: {{ .Values.clickhouse.userProfiles.readWrite.maxMemoryUsage }}
+      {{- end }}
+      {{ .Values.clickhouse.userProfiles.readWrite.name }}/prefer_global_in_and_join: 1
+      {{ .Values.clickhouse.userProfiles.readOnly.name }}/readonly: 2   # allow read queries only (SELECT, SHOW, DESCRIBE, EXISTS) and SET SETTINGS
+      {{ .Values.clickhouse.userProfiles.readOnly.name }}/allow_ddl: 0  # disallow DDL queries    (CREATE, ALTER, RENAME, ATTACH, DETACH, DROP, TRUNCATE)
+      {{ .Values.clickhouse.userProfiles.readOnly.name }}/log_queries: 1
+      {{ .Values.clickhouse.userProfiles.readOnly.name }}/skip_unavailable_shards: 1
+      # disable the query profiler due to us hitting https://github.com/ClickHouse/ClickHouse/issues/15638 on some arm64 hosts
+      {{ .Values.clickhouse.userProfiles.readOnly.name }}/query_profiler_cpu_time_period_ns: "0"
+      {{ .Values.clickhouse.userProfiles.readOnly.name }}/query_profiler_real_time_period_ns: "0"
+      {{- if .Values.clickhouse.userProfiles.readOnly.maxMemoryUsage }}
+      {{ .Values.clickhouse.userProfiles.readOnly.name }}/max_memory_usage: {{ .Values.clickhouse.userProfiles.readOnly.maxMemoryUsage }}
+      {{- end }}
+      {{ .Values.clickhouse.userProfiles.readOnly.name }}/prefer_global_in_and_join: 1
+      {{- if .Values.clickhouse.userProfiles.extraConfig }}
+      {{- .Values.clickhouse.userProfiles.extraConfig | toYaml | nindent 6 }}
+      {{- end }}
+      {{ .Values.clickhouse.userProfiles.trimmer.name }}/readonly: 0      # allow all queries       (SELECT, SHOW, DESCRIBE, EXISTS, INSERT, OPTIMIZE, SET, USE)
+      {{ .Values.clickhouse.userProfiles.trimmer.name }}/allow_ddl: 1     # allow DDL queries       (CREATE, ALTER, RENAME, ATTACH, DETACH, DROP, TRUNCATE)
+      {{ .Values.clickhouse.userProfiles.trimmer.name }}/log_queries: 1
+      {{ .Values.clickhouse.userProfiles.trimmer.name }}/skip_unavailable_shards: 1
+      {{ .Values.clickhouse.userProfiles.trimmer.name }}/prefer_global_in_and_join: 1
+      # disable the query profiler due to us hitting https://github.com/ClickHouse/ClickHouse/issues/15638 on some arm64 hosts
+      {{ .Values.clickhouse.userProfiles.trimmer.name }}/query_profiler_cpu_time_period_ns: "0"
+      {{ .Values.clickhouse.userProfiles.trimmer.name }}/query_profiler_real_time_period_ns: "0"
+      {{- if .Values.clickhouse.userProfiles.trimmer.maxMemoryUsage }}
+      {{ .Values.clickhouse.userProfiles.trimmer.name }}/max_memory_usage: {{ .Values.clickhouse.userProfiles.trimmer.maxMemoryUsage }}
+      {{- end }}
+    users:
+      {{ .Values.migrate.clickhouse.credentials.username }}/k8s_secret_password: {{ .Release.Namespace }}/{{ .Values.migrate.clickhouse.credentials.secretName }}/CLICKHOUSE_PASSWORD
+      {{ .Values.migrate.clickhouse.credentials.username }}/profile: {{ .Values.clickhouse.userProfiles.admin.name }}
+      {{ .Values.migrate.clickhouse.credentials.username }}/grants/query:
+        - "REVOKE ALL ON *.*"
+        - "GRANT timescape_admin_role"
+      {{ .Values.migrate.clickhouse.credentials.username }}/quota: default
+      {{ .Values.migrate.clickhouse.credentials.username }}/networks/ip:
+        - "::/0"
+      {{ .Values.ingester.clickhouse.credentials.username }}/k8s_secret_password: {{ .Release.Namespace }}/{{ .Values.ingester.clickhouse.credentials.secretName }}/CLICKHOUSE_PASSWORD
+      {{ .Values.ingester.clickhouse.credentials.username }}/profile: {{ .Values.clickhouse.userProfiles.readWrite.name }}
+      {{ .Values.ingester.clickhouse.credentials.username }}/grants/query:
+        - "REVOKE ALL ON *.*"
+        - "GRANT timescape_readwrite_role"
+      {{ .Values.ingester.clickhouse.credentials.username }}/quota: default
+      {{ .Values.ingester.clickhouse.credentials.username }}/networks/ip:
+        - "::/0"
+      {{ .Values.trimmer.clickhouse.credentials.username }}/k8s_secret_password: {{ .Release.Namespace }}/{{ .Values.trimmer.clickhouse.credentials.secretName }}/CLICKHOUSE_PASSWORD
+      {{ .Values.trimmer.clickhouse.credentials.username }}/profile: {{ .Values.clickhouse.userProfiles.trimmer.name }}
+      {{ .Values.trimmer.clickhouse.credentials.username }}/grants/query:
+        - "REVOKE ALL ON *.*"
+        - "GRANT timescape_trimmer_role"
+      {{ .Values.trimmer.clickhouse.credentials.username }}/quota: default
+      {{ .Values.trimmer.clickhouse.credentials.username }}/networks/ip:
+        - "::/0"
+      {{ .Values.server.clickhouse.credentials.username }}/k8s_secret_password: {{ .Release.Namespace }}/{{ .Values.server.clickhouse.credentials.secretName }}/CLICKHOUSE_PASSWORD
+      {{ .Values.server.clickhouse.credentials.username }}/profile: {{ .Values.clickhouse.userProfiles.readWrite.name }}
+      {{ .Values.server.clickhouse.credentials.username }}/grants/query:
+        - "REVOKE ALL ON *.*"
+        - "GRANT timescape_readwrite_role"
+      {{ .Values.server.clickhouse.credentials.username }}/quota: default
+      {{ .Values.server.clickhouse.credentials.username }}/networks/ip:
+        - "::/0"
+      {{ .Values.analyzer.clickhouse.credentials.username }}/k8s_secret_password: {{ .Release.Namespace }}/{{ .Values.analyzer.clickhouse.credentials.secretName }}/CLICKHOUSE_PASSWORD
+      {{ .Values.analyzer.clickhouse.credentials.username }}/profile: {{ .Values.clickhouse.userProfiles.readWrite.name }}
+      {{ .Values.analyzer.clickhouse.credentials.username }}/grants/query:
+        - "REVOKE ALL ON *.*"
+        - "GRANT timescape_readwrite_role"
+      {{ .Values.analyzer.clickhouse.credentials.username }}/quota: default
+      {{ .Values.analyzer.clickhouse.credentials.username }}/networks/ip:
+        - "::/0"
+      {{- if .Values.clickhouse.readOnlyAccount.enabled }}
+      {{ .Values.clickhouse.readOnlyAccount.username }}/k8s_secret_password: {{ .Release.Namespace }}/{{ .Values.clickhouse.readOnlyAccount.credentials.secretName }}/CLICKHOUSE_PASSWORD
+      {{ .Values.clickhouse.readOnlyAccount.username }}/profile: {{ .Values.clickhouse.userProfiles.readOnly.name }}
+      {{ .Values.clickhouse.readOnlyAccount.username }}/grants/query:
+        - "REVOKE ALL ON *.*"
+        - "GRANT timescape_readonly_role"
+      {{ .Values.clickhouse.readOnlyAccount.username }}/quota: default
+      {{ .Values.clickhouse.readOnlyAccount.username }}/networks/ip:
+        - "::/0"
+      {{- end }}
+      {{- if .Values.clickhouse.cluster.prometheus.tableMetrics.enabled }}
+      {{ .Values.clickhouse.cluster.prometheus.tableMetrics.credentials.username }}/k8s_secret_password: {{ .Release.Namespace }}/{{ .Values.clickhouse.cluster.prometheus.tableMetrics.credentials.secretName }}/CLICKHOUSE_PASSWORD
+      {{ .Values.clickhouse.cluster.prometheus.tableMetrics.credentials.username }}/profile: {{ .Values.clickhouse.userProfiles.readOnly.name }}
+      {{ .Values.clickhouse.cluster.prometheus.tableMetrics.credentials.username }}/grants/query:
+        - "REVOKE ALL ON *.*"
+        - "GRANT timescape_readonly_role"
+        - "GRANT SELECT on system.parts"
+        - "GRANT SHOW on system.*"
+      {{ .Values.clickhouse.cluster.prometheus.tableMetrics.credentials.username }}/quota: default
+      {{ .Values.clickhouse.cluster.prometheus.tableMetrics.credentials.username }}/networks/ip:
+        - "::/0"
+      {{- end }}
+  templates:
+    podTemplates:
+    - name: pod-template
+      metadata:
+        {{- with include "hubble-timescape-clickhouse.annotations" . }}
+        annotations:
+          {{- . | nindent 10 }}
+        {{- end }}
+        labels:
+          # clickhouse-operator will also add its own set of labels
+          {{- include "hubble-timescape-clickhouse.podLabels" . | nindent 10 }}
+      spec:
+        priorityClassName: {{ .Values.clickhouse.cluster.priorityClassName }}
+        affinity:
+          podAntiAffinity:
+            # never schedule on a node running Timescape Lite with clickhouse to prevent accidentally mounting a PV twice
+            requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                - key: hubble-timescape-lite-clickhouse
+                  operator: Exists
+              topologyKey: kubernetes.io/hostname
+        containers:
+          - name: clickhouse
+            image: {{ include "hubble-timescape.image" .Values.clickhouse.cluster.image | quote }}
+            imagePullPolicy: {{ .Values.clickhouse.cluster.image.pullPolicy }}
+            terminationMessagePolicy: FallbackToLogsOnError
+            resources:
+              {{- toYaml .Values.clickhouse.cluster.resources | nindent 14 }}
+            volumeMounts:
+              - name: data-storage-template
+                mountPath: /var/lib/clickhouse
+            {{- if $tls.enabled }}
+              - name: tls
+                mountPath: "/etc/clickhouse-server/tls"
+                readOnly: true
+              - name: client-config
+                mountPath: "/etc/clickhouse-client/"
+                readOnly: true
+            {{- end }}
+            {{- if $tls.ca.configMap.name }}
+              - name: ca
+                mountPath: "/etc/clickhouse-server/ca"
+                readOnly: true
+            {{- end }}
+            {{- with .Values.clickhouse.cluster.extraVolumeMounts }}
+              {{- toYaml . | nindent 14 }}
+            {{- end }}
+            env:
+            {{- if not .Values.clickhouse.cluster.chown }}
+              - name: CLICKHOUSE_DO_NOT_CHOWN
+                value: "1"
+            {{- end }}
+            {{- with .Values.clickhouse.cluster.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+            readinessProbe:
+              httpGet:
+                path: /ping
+              {{- if $tls.enabled }}
+                port: https
+                scheme: HTTPS
+              {{- else }}
+                port: http
+                scheme: HTTP
+              {{- end }}
+            livenessProbe:
+              httpGet:
+                path: /ping
+              {{- if $tls.enabled }}
+                port: https
+                scheme: HTTPS
+              {{- else }}
+                port: http
+                scheme: HTTP
+              {{- end }}
+              initialDelaySeconds: {{ .Values.clickhouse.cluster.livenessProbe.initialDelaySeconds }}
+              periodSeconds: 3
+            ports:
+            {{- if $tls.enabled }}
+            - containerPort: 9440
+              name: tcp
+              protocol: TCP
+            - containerPort: 8443
+              name: https
+              protocol: TCP
+            - containerPort: 9009
+              name: interserver
+              protocol: TCP
+            {{- else }}
+            - containerPort: 9000
+              name: tcp
+              protocol: TCP
+            - containerPort: 8123
+              name: http
+              protocol: TCP
+            - containerPort: 9009
+              name: interserver
+              protocol: TCP
+            {{- end }}
+            - containerPort: 8001
+              name: metrics
+              protocol: TCP
+            {{- with .Values.clickhouse.cluster.securityContext }}
+            securityContext:
+              {{- toYaml . | nindent 14 }}
+            {{- end }}
+        {{- with .Values.clickhouse.cluster.image.pullSecrets }}
+        imagePullSecrets:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- with .Values.clickhouse.cluster.podSecurityContext }}
+        securityContext:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        volumes:
+        {{- if $tls.enabled }}
+        - name: tls
+          projected:
+            # need group read permissions so fsGroup can read the files
+            defaultMode: 0440
+            sources:
+            - secret:
+                items:
+                - key: tls.crt
+                  path: tls.crt
+                - key: tls.key
+                  path: tls.key
+                name: {{ .Values.clickhouse.tls.server.secretName }}
+        - name: client-config
+          projected:
+            defaultMode: 0400
+            sources:
+            - configMap:
+                items:
+                - key: config.xml
+                  path: config.xml
+                name: hubble-timescape-clickhouse-client-config
+        {{- end }}
+        {{- if $tls.ca.configMap.name }}
+        - name: ca
+          projected:
+            defaultMode: 0400
+            sources:
+            - configMap:
+                items:
+                - key: ca.crt
+                  path: ca.crt
+                name: {{ $tls.ca.configMap.name }}
+        {{- end }}
+        {{- with .Values.clickhouse.cluster.extraVolumes }}
+          {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- with .Values.clickhouse.cluster.nodeSelector }}
+        nodeSelector:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- with .Values.clickhouse.cluster.tolerations }}
+        tolerations:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- with .Values.clickhouse.cluster.affinity }}
+        affinity:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+    serviceTemplates:
+      - name: svc-template
+        generateName: "clickhouse-{chi}"
+        metadata:
+          labels:
+            # clickhouse-operator will also add its own set of labels
+            metrics-service: 'true'
+            {{- include "hubble-timescape-clickhouse.labels" . | nindent 12 }}
+        spec:
+          ports:
+          {{- if $tls.enabled }}
+            - name: https
+              port: 8443
+            - name: tcp
+              port: 9440
+          {{- else }}
+            - name: http
+              port: 8123
+            - name: tcp
+              port: 9000
+          {{- end }}
+            - name: metrics
+              port: 8001
+          type: ClusterIP  # Avoid exposing the ClickHouse installation to outside.
+    volumeClaimTemplates:
+    - name: data-storage-template
+      reclaimPolicy: Retain
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: {{ .Values.clickhouse.cluster.volumes.data.size }}
+        storageClassName: {{ .Values.clickhouse.cluster.volumes.data.storageClassName }}
+{{- end }}

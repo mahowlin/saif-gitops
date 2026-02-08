@@ -1,0 +1,71 @@
+networkPolicies:
+  enabled: true
+
+clickhouse:
+  cluster:
+    enabled: true
+    volumes:
+      data:
+        size: 1Ti
+        storageClassName: ""
+    prometheus:
+      serviceMonitor:
+        enabled: true
+      tableMetrics:
+        enabled: true
+  settings:
+    systemLogs:
+      ttl: 2 day
+      tables:
+        processorsProfileLog:
+          enabled: false
+        queryLog:
+          ttl: 1 hour
+server:
+  extraEnv:
+    - name: FOO
+      value: BAR
+ingester:
+  extraEnv:
+    - name: FOO
+      value: BAR
+  bucket:
+    uri: "s3://timescape/hubble-events?endpoint=https://minio.minio.svc.cluster.local&s3ForcePathStyle=true"
+    prefixPattern: "%Y/%m/%d"
+  server:
+    authMethod: mtls
+    http:
+      enabled: true
+    grpc:
+      enabled: true
+    tls:
+      clientCA:
+        configMap:
+          name: selfsigned-ca-bundle
+          key: "ca.crt"
+  k8sImporter:
+    enabled: true
+    clusterName: my-cluster
+analyzer:
+  scheduleInterval: 5m
+  extraEnv:
+    - name: FOO
+      value: BAR
+ui:
+  extraEnv:
+    - name: FOO
+      value: BAR
+  enabled: true
+  ingress:
+    enabled: true
+    tls:
+      enabled: true
+      secretName: hubble-timescape-ui-ingress-cert
+  route:
+    enabled: true
+    parentRefs:
+      - kind: Gateway
+        name: hubble-timescape-ui-gateway
+        namespace: hubble-timescape
+    hostnames:
+      - "hubble-timescape-ui.example.com"

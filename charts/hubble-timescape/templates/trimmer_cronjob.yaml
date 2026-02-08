@@ -1,0 +1,52 @@
+{{- if and (not .Values.lite.enabled) .Values.trimmer.flowsCount -}}
+{{- $clickhouse := merge dict .Values.trimmer.clickhouse .Values.clickhouse (dict "tls" .Values.tls) }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "hubble-timescape-trimmer.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hubble-timescape-trimmer.labels" . | nindent 4 }}
+spec:
+  schedule: "*/{{ .Values.trimmer.trimIntervalMinutes | int }} * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  jobTemplate:
+    metadata:
+      labels:
+        {{- include "hubble-timescape-trimmer.labels" . | nindent 8 }}
+    spec:
+      backoffLimit: 10
+      template:
+        metadata:
+          {{- with include "hubble-timescape-trimmer.podAnnotations" . }}
+          annotations:
+            {{- . | nindent 12 }}
+          {{- end }}
+          labels:
+            {{- include "hubble-timescape-trimmer.podLabels" . | nindent 12 }}
+        spec:
+          serviceAccountName: {{ .Values.trimmer.serviceAccount.name | quote }}
+          {{- with .Values.trimmer.image.pullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- toYaml .Values.trimmer.podSecurityContext | nindent 12 }}
+          priorityClassName: {{ .Values.trimmer.priorityClassName }}
+          restartPolicy: OnFailure
+          containers: {{- include "hubble-timescape-trimmer.container" . | nindent 12 }}
+          volumes: {{- include "hubble-timescape-trimmer.volumes" . | nindent 10 }}
+          {{- with .Values.trimmer.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.trimmer.affinity }}
+          affinity:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.trimmer.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}

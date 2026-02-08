@@ -1,0 +1,38 @@
+clusterName: fake-cluster
+splunkPlatform:
+  endpoint: CHANGEME
+  token: CHANGEME
+  logsEnabled: true
+
+agent:
+  config:
+    processors:
+      probabilistic_sampler:
+        hash_seed: 22
+        sampling_percentage: 15.3
+    service:
+      pipelines:
+        traces:
+          processors:
+            - memory_limiter
+            - probabilistic_sampler
+            - k8sattributes
+            - batch
+            - resource
+            - resourcedetection
+  extraEnvs:
+    - name: HTTPS_PROXY
+      value: "192.168.0.10"
+
+clusterReceiver:
+  extraEnvs:
+    - name: HTTPS_PROXY
+      value: "192.168.0.10"
+
+gateway:
+  enabled: true
+  replicaCount: 1
+  resources:
+    limits:
+      cpu: 200m
+      memory: 400Mi

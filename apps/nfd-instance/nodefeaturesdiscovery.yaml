@@ -1,0 +1,31 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+# NodeFeatureDiscovery instance - enables NFD on all nodes
+# Detects hardware features including NVIDIA GPUs
+apiVersion: nfd.openshift.io/v1
+kind: NodeFeatureDiscovery
+metadata:
+  name: nfd-instance
+  namespace: openshift-nfd
+spec:
+  operand:
+    # Use digest reference - local mirror only has digest tags, not version tags
+    image: registry.redhat.io/openshift4/ose-node-feature-discovery-rhel9@sha256:5af2932962f77dd2254e1cf50d70c8b8e85625568badd5c550168c2a65f4f636
+    servicePort: 12000
+  workerConfig:
+    configData: |
+      core:
+        sleepInterval: 60s
+      sources:
+        pci:
+          deviceClassWhitelist:
+            - "0200"  # Network controllers
+            - "03"    # Display controllers (GPUs)
+            - "12"    # Processing accelerators
+          deviceLabelFields:
+            - vendor
+            - device
+            - subsystem_vendor
+            - subsystem_device

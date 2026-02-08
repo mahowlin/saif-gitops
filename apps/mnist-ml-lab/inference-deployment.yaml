@@ -1,0 +1,56 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mnist-inference
+  namespace: mnist-ml-lab
+  labels:
+    app: mnist-inference
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mnist-inference
+  template:
+    metadata:
+      labels:
+        app: mnist-inference
+      annotations:
+        openshift.io/required-scc: nonroot-v2
+    spec:
+      securityContext:
+        runAsUser: 999
+        runAsGroup: 999
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: mnist-inference
+          image: registry.example.com:5000/mnist/inference:v1
+          command: ["sh", "-c", "ln -sf /app/model/mnist_cnn.pt /app/app/mnist_cnn.pt && python main.py"]
+          ports:
+            - name: http
+              containerPort: 5000
+          resources:
+            requests:
+              memory: "600Mi"
+              cpu: "200m"
+            limits:
+              memory: "600Mi"
+              cpu: "500m"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - "ALL"
+          volumeMounts:
+            - name: model-storage
+              mountPath: /app/model
+              readOnly: true
+      volumes:
+        - name: model-storage
+          persistentVolumeClaim:
+            claimName: mnist-model

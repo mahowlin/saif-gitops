@@ -1,0 +1,21 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+# Subscription for Tetragon Enterprise operator
+# Uses existing CatalogSource in openshift-marketplace (local registry mirror)
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: tetragon-operator
+  namespace: tetragon
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  labels:
+    operators.coreos.com/tetragon-operator.tetragon: ""
+spec:
+  name: tetragon-operator
+  channel: v1.18
+  source: tetragon-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Automatic

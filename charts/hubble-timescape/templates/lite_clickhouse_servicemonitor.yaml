@@ -1,0 +1,38 @@
+{{- if and .Values.lite.clickhouse.enabled .Values.lite.enabled .Values.lite.clickhouse.prometheus.enabled .Values.lite.clickhouse.prometheus.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "hubble-timescape-lite.name" . }}-clickhouse-metrics
+  namespace: {{ .Values.lite.clickhouse.prometheus.serviceMonitor.namespace | default .Release.Namespace }}
+  labels:
+    {{- include "hubble-timescape-lite.labels" . | nindent 4 }}
+    {{- with .Values.lite.clickhouse.prometheus.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  annotations:
+    {{- with .Values.lite.clickhouse.prometheus.serviceMonitor.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      container: clickhouse
+      {{- include "hubble-timescape-lite.selectorLabels" . | nindent 6 }}
+  namespaceSelector:
+    matchNames:
+    - {{ .Release.Namespace }}
+  endpoints:
+  - port: metrics
+    interval: {{ .Values.lite.clickhouse.prometheus.serviceMonitor.scrapeInterval | quote }}
+    honorLabels: true
+    path: /metrics
+  {{- if .Values.lite.clickhouse.prometheus.tableMetrics.enabled }}
+  - port: http
+    interval: 15s
+    honorLabels: true
+    # see clickhouse-settings.xml where we define custom http_handlers
+    path: /isovalent/metrics/table
+    params:
+      user: [tablemetrics]
+    {{- end }}
+{{- end }}

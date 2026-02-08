@@ -1,0 +1,37 @@
+{{- if .Values.clickhouse.cluster.enabled }}
+{{- $tls := merge dict .Values.clickhouse.tls .Values.tls -}}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "{{- .Chart.Name }}-clickhouse-client-config"
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hubble-timescape-clickhouse.labels" . | nindent 4 }}
+data:
+  config.xml: |
+    <config>
+        {{- if $tls.enabled }}
+        <openSSL>
+            <client>
+                <caConfig>/etc/clickhouse-server/ca/ca.crt</caConfig>
+                <loadDefaultCAFile>false</loadDefaultCAFile>
+                <cacheSessions>true</cacheSessions>
+                <dhParamsFile remove="1"></dhParamsFile>
+                <disableProtocols>sslv2,sslv3,tlsv1,tlsv1_1,tlsv1_2</disableProtocols>
+                <preferServerCiphers>false</preferServerCiphers>
+                <requireTLSv1>false</requireTLSv1>
+                <requireTLSv1_1>false</requireTLSv1_1>
+                <requireTLSv1_2>false</requireTLSv1_2>
+                <requireTLSv1_3>true</requireTLSv1_3>
+                <verificationMode>strict</verificationMode>
+                <invalidCertificateHandler>
+                  <name>RejectCertificateHandler</name>
+                </invalidCertificateHandler>
+            </client>
+        </openSSL>
+        <port>9440</port>
+        <secure>1</secure>
+        {{- end }}
+    </config>
+{{- end }}

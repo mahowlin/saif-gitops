@@ -1,0 +1,18 @@
+{{- if (include "hubble-timescape-certgen.enabled" .) }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "hubble-timescape-certgen.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hubble-timescape-certgen.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.certgen.schedule }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  jobTemplate:
+    metadata:
+      labels:
+        {{- include "hubble-timescape-certgen.labels" . | nindent 8 }}
+    spec: {{- include "hubble-timescape-certgen.jobSpec" . | nindent 6 }}
+{{- end }}

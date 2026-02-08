@@ -1,0 +1,24 @@
+{{- $tls := merge dict .Values.server.tls .Values.tls -}}
+{{- if and .Values.server.enabled $tls.enabled $tls.auto.enabled (eq $tls.auto.method "certmanager") }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: hubble-timescape-server-cert
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hubble-timescape-server.labels" . | nindent 4 }}
+spec:
+  secretName: hubble-timescape-server-cert
+  isCA: false
+  privateKey: {{ toYaml .Values.server.tls.auto.certmanager.privateKey | nindent 4 }}
+  usages:
+    - server auth
+  commonName: hubble-timescape
+  dnsNames:
+    - "localhost"
+    - "hubble-timescape"
+    - "hubble-timescape.{{ .Release.Namespace }}"
+    - "hubble-timescape.{{ .Release.Namespace }}.svc.cluster.local"
+  issuerRef:
+    {{- required "server.tls.auto.certmanager.issuerRef must be set with server.tls.auto.method=certmanager" $tls.auto.certmanager.issuerRef | toYaml | nindent 4 }}
+{{- end }}

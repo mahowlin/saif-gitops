@@ -1,0 +1,28 @@
+{{- if and .Values.ingester.enabled .Values.ingester.prometheus.enabled .Values.ingester.prometheus.serviceMonitor.enabled  (not .Values.lite.enabled) }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "hubble-timescape-ingester.name" . }}
+  namespace: {{ .Values.ingester.prometheus.serviceMonitor.namespace | default .Release.Namespace }}
+  labels:
+    {{- include "hubble-timescape-ingester.labels" . | nindent 4 }}
+    {{- with .Values.ingester.prometheus.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  annotations:
+    {{- with .Values.ingester.prometheus.serviceMonitor.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "hubble-timescape-ingester.selectorLabels" . | nindent 6 }}
+  namespaceSelector:
+    matchNames:
+    - {{ .Release.Namespace }}
+  endpoints:
+  - port: metrics
+    interval: {{ .Values.ingester.prometheus.serviceMonitor.scrapeInterval | quote }}
+    honorLabels: true
+    path: /metrics
+{{- end }}

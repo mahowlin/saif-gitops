@@ -1,0 +1,26 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: mnist-ml-lab
+  namespace: openshift-gitops
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/mahowlin/saif-gitops.git
+    targetRevision: main
+    path: apps/mnist-ml-lab
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: mnist-ml-lab
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

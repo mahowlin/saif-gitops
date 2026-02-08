@@ -1,0 +1,17 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Tier 3: NVIDIA Stack - clusters with GPUs (ai-pod-1, ai-pod-2)
+resources:
+  - sealed-secrets-gpu.yaml
+  - gpu-operator.yaml
+  - gpu-cluster-policy.yaml
+  - nfd-operator.yaml
+  - nfd-instance.yaml
+  - nim-operator.yaml
+  # Add your NIM LLM Application here, e.g.:
+  # - nim-llm.yaml

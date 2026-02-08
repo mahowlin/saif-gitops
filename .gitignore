@@ -1,0 +1,23 @@
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+
+# Secrets (never commit)
+*-secret.yaml
+*.key
+*.pem
+
+# Helm
+*.tgz
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Claude
+.claude/

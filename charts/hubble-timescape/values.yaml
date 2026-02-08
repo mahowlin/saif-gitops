@@ -1,0 +1,1932 @@
+# -- Globally configure the log level. Valid values are: trace, debug, info,
+# warn and error.
+logLevel: info
+# -- Install network policies for Hubble Timescape.
+networkPolicies:
+  # -- Install CiliumNetworkPolicies for Hubble Timescape components
+  enabled: false
+  clickhouseOperatorNamespace: clickhouse-operator
+  # -- CiliumNetworkPolicies endpoint selectors allowing Hubble UI to access Hubble Timescape server.
+  hubbleUI:
+    ingress:
+      fromEndpoints:
+        - matchExpressions:
+            - key: k8s-app
+              operator: In
+              values:
+                - hubble-ui
+            - key: "k8s:io.kubernetes.pod.namespace"
+              operator: In
+              values:
+                - kube-system
+                - hubble-ui
+                - hubble-ui-enterprise
+  # -- CiliumNetworkPolicies endpoint selectors allowing Hubble Enterprise
+  # fluentd and Cilium vector to access Hubble Timescape ingester's push API.
+  push:
+    ingress:
+      fromEndpoints:
+        # Allow access from fluentd pushing via hubble-enterprise
+        - matchExpressions:
+            - key: app.kubernetes.io/name
+              operator: In
+              values:
+                - hubble-enterprise
+            - key: "k8s:io.kubernetes.pod.namespace"
+              operator: In
+              values:
+                - kube-system
+                - hubble-enterprise
+        # Allow access from Cilium vector
+        - matchExpressions:
+            - key: k8s-app
+              operator: In
+              values:
+                - cilium-vector
+            - key: "k8s:io.kubernetes.pod.namespace"
+              operator: In
+              values:
+                - kube-system
+                - cilium
+  # -- CiliumNetworkPolicies endpoint selectors allowing Cilium
+  # Hubble stream exporter to access Hubble Timescape ingester's stream API.
+  stream:
+    ingress:
+      fromEndpoints:
+        # Allow access from Cilium Hubble stream exporter
+        - matchExpressions:
+            - key: k8s-app
+              operator: In
+              values:
+                - cilium-agent
+            - key: "k8s:io.kubernetes.pod.namespace"
+              operator: In
+              values:
+                - kube-system
+                - cilium
+  monitoring:
+    ingress:
+      fromEndpoints: ~
+      # Example:
+      # fromEndpoints:
+      #   - matchLabels:
+      #       "k8s:app.kubernetes.io/name": prometheus
+      #       "k8s:io.kubernetes.pod.namespace": monitoring
+  profiling:
+    ingress:
+      fromEndpoints: ~
+      # Example:
+      # fromEndpoints:
+      #   - matchLabels:
+      #       "k8s:app.kubernetes.io/name": phlare
+      #       "k8s:io.kubernetes.pod.namespace": phlare
+# -- Clickhouse controls installation and values related to the ClickHouse
+# instance.
+clickhouse:
+  # -- Create a read-only account to access the database. This account should
+  # be used only by external components (not included in this chart).
+  readOnlyAccount:
+    enabled: false
+    username: "ui"
+    credentials:
+      # -- The name of the secret containing ClickHouse database credentials.
+      # Only read permissions (SELECT, EXISTS) are provided.
+      # This secret MUST be created by the user, and MUST contain the following
+      # key:
+      #   - CLICKHOUSE_PASSWORD
+      secretName: "hubble-timescape-ui-creds"
+  # -- Client allows for configuring client access to the ClickHouse database.
+  client:
+    # -- The data source name (dsn) defines ClickHouse database connection
+    # parameters that are used by Hubble Timescape components such as the server,
+    # ingester or CLI.
+    dsn:
+      # -- Database defines the database name.
+      database: "hubble"
+      # -- Host is the database host, typically the name of the ClickHouse service.
+      # Must be specified if clickhouse.cluster.enabled is false.
+      host: ~
+      # -- Port is the port to connect to the database. Defaults to 9000 in
+      # plaintext mode and 9440 in TLS mode.
+      port: ~
+      # -- Establishing a connection to the database should take less than the
+      # dial timeout. The value is provided as a duration string, ie a signed
+      # sequence of decimal numbers with a unit suffix such as "300ms" or "1m30s".
+      # Valid time units are "ns", "us", "ms", "s", "m", "h".
+      dialTimeout: 10s
+      # -- A deadline for read calls. If unset, reading operations never timeout.
+      # The value is provided as a duration string, ie a signed sequence of
+      # decimal numbers with a unit suffix such as "300ms" or "1m30s".  Valid
+      # time units are "ns", "us", "ms", "s", "m", "h".
+      readTimeout: ~
+      # -- Enable verbose database logging.
+      debug: false
+      # -- Compression allows enabling compression.
+      compression:
+        # -- The compression method must be one of "none", "lz4" or "zstd".
+        method: ~
+      send_logs:
+        # -- Enable streaming server side logs back to the client.
+        # Valid values: "none", "fatal", "critical", "error", "warning",
+        # "notice", "information", "debug", "trace"
+        level: ~
+    serverLogs:
+      # -- Enable logging clickhouse-server logs. Requires
+      # clickhouse.client.dsn.send_logs.level to be configured to take effect.
+      log: false
+    progress:
+      # -- Enable query progress logs
+      log: false
+  # -- TLS allows for configuring TLS for the ClickHouse database and ClickHouse clients.
+  tls:
+    # -- Enables TLS for clickhouse server and all timescape clickhouse clients.
+    enabled: false
+    auto:
+      # -- Enables automatically provisioning TLS certificates.
+      enabled: false
+      # -- Set the method to auto-generate certificates. Supported values:
+      # - cronJob:      This method uses a Kubernetes CronJob the generate any
+      #                 certificates not provided by the user at installation
+      #                 time.
+      # - certmanager:  This method use cert-manager to generate & rotate certificates.
+      method: ""
+      certmanager:
+        # -- Certificate issuer ref.
+        # See https://cert-manager.io/docs/usage/certificate/#creating-certificate-resources
+        issuerRef: ~
+        # -- Algorithm configuration for the generated certificate. See
+        # https://cert-manager.io/docs/usage/certificate/#creating-certificate-resources
+        privateKey:
+          algorithm: ECDSA
+    # -- Server references the secret that contains TLS material to enable TLS
+    # for the database server(s).
+    server:
+      # -- The name of the secret containing TLS material.
+      # The secret must be of type `kubernetes.io/tls`.
+      secretName: "hubble-timescape-clickhouse-cert"
+    ca:
+      # -- The configmap containing the CA for ClickHouse
+      configMap:
+        name: ~
+        key: "ca.crt"
+  # -- Adjust settings for the user profiles.
+  userProfiles:
+    # -- The admin profile is the most privileged one and is only used for the
+    # 'migrate' user which is in charge of creating and updating the database
+    # tables.
+    admin:
+      name: timescape_admin_role
+      maxMemoryUsage: ~
+    # -- The readwrite profile cannot run DDL queries (CREATE, ALTER, etc) but
+    # is allowed to run INSERT queries in addition to read-only ones. It is
+    # only used by the `ingester` user which is in charge of inserting data
+    # into the database.
+    readWrite:
+      name: timescape_readwrite_role
+      maxMemoryUsage: ~
+    # -- The readOnly profile can only run read-only queries (e.g. SELECT,
+    # DESCRIBE). It is used by all other users.
+    readOnly:
+      name: timescape_readonly_role
+      maxMemoryUsage: ~
+    # -- The trimmer profile is also highly privileged. It is able to run all
+    # queries and issue DDL queries which is required for deleting rows (using
+    # ALTER TABLE .. DELETE). It is only used for the 'trimmer' user which is
+    # in charge of querying for flows and deleting the oldest entries if over
+    # the trimmer.flowsCount.
+    trimmer:
+      name: timescape_trimmer_role
+      maxMemoryUsage: ~
+    # -- extraConfig can be used to add arbitrary configuration options to the
+    # clickhouse user profiles.
+    extraConfig: {}
+  # -- settings can be used to specify custom ClickHouse server settings
+  settings:
+    logger:
+      level: information
+    # -- maxConnections is the maximum number of inbound connections that a
+    # ClickHouse server accepts.
+    maxConnections: 4096
+    # -- maxConcurrentQueries is the maximum number of simultaneously processed
+    # queries.
+    maxConcurrentQueries: 100
+    # -- maxSuspiciousBrokenParts is the maximum number of broken parts that are allowed
+    # at startup. If the number of broken parts exceeds this value, the server will
+    # refuse to start and throw an error such as:
+    #   DB::Exception: Suspiciously many broken parts to remove.
+    # For more details, see: https://kb.altinity.com/altinity-kb-setup-and-maintenance/suspiciously-many-broken-parts/.
+    maxSuspiciousBrokenParts: 500
+    # -- queryLog setting is deprecated, use clickhouse.settings.systemLogs
+    queryLog: {}
+    # -- systemLogs can be used to configure ClickHouse internal system log
+    # tables.
+    # System log tables can be very helpful when troubleshooting, but can over
+    # time result in quite large storage usage. See
+    # https://clickhouse.com/docs/en/operations/system-tables for more
+    # information on system log tables.
+    systemLogs:
+      # -- enables log tables if they are not explicitly disabled in
+      # clickhouse.settings.systemLogs.tables.
+      enabled: true
+      # -- ttl is the default time system logs are kept.
+      # Defaults to "3 day", or "2 hour" when using Timescape Lite. The TTL is
+      # specified as a ClickHouse interval type:
+      # https://clickhouse.com/docs/en/sql-reference/data-types/special-data-types/interval
+      ttl: ~
+      # -- tables allows overriding `enable` and `ttl` on a per system log table basis.
+      #
+      # For example the following will disable the `processors_profile_log` table
+      # and reduce the `query_log` table ttl to 1 hour:
+      #
+      # tables:
+      #   processorsProfileLog:
+      #     enabled: false
+      #   queryLog:
+      #     ttl: 1 hour
+      tables:
+        asynchronousInsertLog: {}
+        asynchronousMetricLog: {}
+        backupLog:
+          ttl: 1 year
+        blobStorageLog: {}
+        crashLog:
+          ttl: 1 year
+        errorLog:
+          ttl: 2 month
+        metricLog: {}
+        opentelemetrySpanLog:
+          column: "fromUnixTimestamp64Micro(finish_time_us)"
+        partLog: {}
+        processorsProfileLog: {}
+        queryLog: {}
+        queryMetricLog: {}
+        queryThreadLog: {}
+        queryViewsLog: {}
+        sessionLog: {}
+        textLog: {}
+        traceLog: {}
+        zookeeperLog: {}
+    # -- extraConfig can be used to add arbitrary configuration options to the
+    # clickhouse server settings.
+    extraConfig: {}
+    # -- storage allows configuring clickhouse storage configuration options.
+    #
+    # # Experimental
+    #
+    # Notice: this functionality is EXPERIMENTAL and may be changed or removed
+    # in a later release.
+    # All configuration options under this key are also experimental.
+    storage:
+      # -- Policy configures which storage policy to use.
+      #
+      # Options:
+      # - "" - Uses local disk as the primary data store.
+      # - "s3" - Use S3 as the primary data store.
+      # - "s3_cache" - Use S3 as the primary data store and use a local on-disk LRU cache. Requires s3.cache.enabled=true.
+      policy: ""
+      s3:
+        endpoint: ~
+        region: ~
+        bucket: ~
+        path: ~
+        usePathStyleAccess: false
+        tls:
+          enabled: true
+        cache:
+          enabled: true
+          maxSize: 10Gi
+  # -- The cluster section may be used to automatically provision a ClickHouse
+  # cluster for use by Hubble Timescape. A supported ClickHouse operator
+  # provider must be installed prior to Hubble Timescape for the functionality
+  # to work.
+  cluster:
+    # -- Specifies the ClickHouse cluster provider to use when creating the
+    # ClickHouse cluster. Currently the only supported value is
+    # "altinity-clickhouse-operator".
+    provider: "altinity-clickhouse-operator"
+    # -- Creates a ClickHouseInstallation to provision a new ClickHouse cluster
+    # using clickhouse-operator.
+    # clickhouse-operator must already be installed and configured to monitor
+    # the namespace Hubble Timescape is running in.
+    enabled: false
+    chown: true
+    livenessProbe:
+      initialDelaySeconds: 60
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+    resources: {}
+    podAnnotations: {}
+    podLabels: {}
+    extraEnv: []
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+      runAsGroup: 101
+      runAsNonRoot: true
+      runAsUser: 101
+      seccompProfile:
+        type: RuntimeDefault
+    podSecurityContext:
+      # clickhouse GID is 101, and mounted files need to have the correct
+      # permissions for clickhouse to read them
+      fsGroup: 101
+      seccompProfile:
+        type: RuntimeDefault
+    extraVolumes: []
+    extraVolumeMounts: []
+    image:
+      override: ~
+      repository: quay.io/isovalent/clickhouse-server
+      # use skopeo inspect to get the multiarch manifest list digest
+      # skopeo inspect docker://clickhouse/clickhouse-server:YOUR_TAG | jq -r .Digest
+      tag: 25.8.11.66-alpine@sha256:32a477a44e92a37347e6df7684a1e6cce01f5af73d356e03ca13383da0bdf8b3
+      pullPolicy: IfNotPresent
+      pullSecrets: []
+    priorityClassName: null
+    volumes:
+      data:
+        size: 10Gi
+        storageClassName: ~
+    prometheus:
+      serviceMonitor:
+        # -- Create a ServiceMonitor resource to scrape metrics (requires prometheus-operator CRDs to be available).
+        enabled: false
+        # -- Namespace to create the service monitor in. Defaults to namespace of the helm release.
+        namespace: ~
+      prometheusRule:
+        # -- Create a PrometheusRule resource with predefined alerts and recording rules.
+        enabled: false
+        rules:
+          # -- Alert that will fire if the percentage of available space of the ClickHouse
+          # volume is predicted to fall below the configured threshold in the configured
+          # predictionTime.
+          #
+          # By default this means if we predict less than 20% available space in 48 hours.
+          TimescapeClickhouseVolumeFillingUp:
+            enabled: true
+            threshold: 0.2
+            predictionTime: 48h
+      tableMetrics:
+        # -- Adds an endpoint to the ServiceMonitor resource to scrape table metrics
+        # (requires ServiceMonitor to be enabled).
+        enabled: false
+        credentials:
+          username: timescape_table_metrics
+          # -- The name of the secret containing ClickHouse database credentials.
+          # Only read permissions (SELECT, EXISTS) are provided.
+          # This secret MUST be created by the user, and MUST contain the following
+          # keys:
+          #   - CLICKHOUSE_USERNAME
+          #   - CLICKHOUSE_PASSWORD
+          secretName: "hubble-timescape-table-metrics-creds"
+# -- Certgen configures certificate generation. If
+# tls.auto.method=cronJob, for the server, ingester, or ClickHouse, these
+# values are used for the Kubernetes CronJob which will be scheduled regularly
+# to (re)generate certificates
+certgen:
+  image:
+    override: ~
+    repository: quay.io/isovalent/certgen
+    tag: "v0.2.4"
+    pullPolicy: IfNotPresent
+    pullSecrets: []
+  schedule: "0 0 1 */2 *"
+  podSecurityContext:
+    fsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    # readOnlyRootFilesystem: true
+    privileged: false
+    allowPrivilegeEscalation: false
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile:
+      type: RuntimeDefault
+  priorityClassName: null
+  resources: {}
+  # -- We usually recommend not to specify default resources and to leave
+  # this as a conscious choice for the user. This also increases chances
+  # charts run on environments with little resources, such as Minikube. If
+  # you do want to specify resources, uncomment the following lines, adjust
+  # them as necessary, and remove the curly braces after 'resources:'.
+  # limits:
+  #   cpu: 100m
+  #   memory: 128Mi
+  # requests:
+  #   cpu: 100m
+  #   memory: 128Mi
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podAnnotations: {}
+  podLabels: {}
+  serviceAccount:
+    # -- Whether to create a Kubernetes service account for certgen. If set,
+    # RBAC rules to allow creating and updating certificate will be created.
+    # If an existing service account is used you need to make sure it has the
+    # necessary permissions.
+    create: true
+    # -- The name of the Kubernetes service account to use for certgen.
+    # Can be the name of an existing Kubernetes service account, in which case
+    # 'create' should be 'false'.
+    name: hubble-timescape-certgen
+    # -- Annotations for the certgen Kubernetes service account
+    annotations: ~
+  # -- Additional certgen volumes.
+  extraVolumes: []
+  # -- Additional certgen volumeMounts.
+  extraVolumeMounts: []
+# -- Trimmer is an optional CronJob limiting the size of ClickHouse tables
+# by periodically deleting the oldest data.
+trimmer:
+  # -- Desired max number of flows stored in ClickHouse. If 0 or null,
+  # trimming flows is disabled.
+  flowsCount: ~
+  # -- Job interval, in minutes. Must be a positive integer.
+  trimIntervalMinutes: 60
+  # -- Trimmer timeout specified as a Go duration. Defaults to trimIntervalMinutes minutes.
+  # Examples: 30s, 1m, 5m, 1h
+  timeout: ~
+  image:
+    override: ~
+    repository: quay.io/isovalent/hubble-timescape
+    tag: "v1.18.1"
+    pullPolicy: IfNotPresent
+    pullSecrets: []
+  podSecurityContext:
+    fsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    # readOnlyRootFilesystem: true
+    privileged: false
+    allowPrivilegeEscalation: false
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile:
+      type: RuntimeDefault
+  priorityClassName: null
+  resources: {}
+  # -- We usually recommend not to specify default resources and to leave
+  # this as a conscious choice for the user. This also increases chances
+  # charts run on environments with little resources, such as Minikube. If
+  # you do want to specify resources, uncomment the following lines, adjust
+  # them as necessary, and remove the curly braces after 'resources:'.
+  # limits:
+  #   cpu: 100m
+  #   memory: 128Mi
+  # requests:
+  #   cpu: 100m
+  #   memory: 128Mi
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podAnnotations: {}
+  podLabels: {}
+  serviceAccount:
+    # -- Whether to create a Kubernetes service account for the trimmer.
+    create: true
+    # -- The name of the Kubernetes service account to use for the trimmer.
+    # Can be the name of an existing Kubernetes service account, in which case
+    # 'create' should be 'false'.
+    name: hubble-timescape-trimmer
+    # -- Annotations for the Hubble Timescape trimmer Kubernetes service account
+    annotations: ~
+  # -- Additional trimmer volumes.
+  extraVolumes: []
+  # -- Additional trimmer volumeMounts.
+  extraVolumeMounts: []
+  # -- Clickhouse allows specifying on the ClickHouse client for the trimmer
+  # component connects to the database.
+  clickhouse:
+    client:
+      dsn: {}
+    tls:
+      ca: {}
+    credentials:
+      # -- The ClickHouse username to authenticate with.
+      username: timescape_trimmer
+      # -- The name of the secret containing ClickHouse database admin
+      # credentials.
+      # DDL (CREATE, ALTER, DROP, TRUNCATE) and read permissions are
+      # provided.
+      # This secret MUST be created by the user, and MUST contain the following
+      # key:
+      #   - CLICKHOUSE_PASSWORD
+      secretName: "hubble-timescape-trimmer-creds"
+# -- Server is the component that implements and services the gRPC APIs. It
+# consists of a single deployment and provides the hubble-timescape service
+# that is typically accessed by Hubble UI, the Hubble CLI and the Hubble
+# datasource plugin for Grafana.
+server:
+  # -- Deploy Hubble Timescape server to serve data over gRPC APIs.
+  enabled: true
+  # -- Configure log level for server. Defaults to the top level logLevel if
+  # unset. Valid values are: trace, debug, info, warn and error.
+  logLevel: ~
+  replicaCount: 1
+  image:
+    override: ~
+    repository: quay.io/isovalent/hubble-timescape
+    tag: "v1.18.1"
+    pullPolicy: IfNotPresent
+    pullSecrets: []
+  # -- Configure extra environment variables for timescape server.
+  extraEnv: []
+  podAnnotations: {}
+  podLabels: {}
+  podSecurityContext:
+    fsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    # readOnlyRootFilesystem: true
+    privileged: false
+    allowPrivilegeEscalation: false
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile:
+      type: RuntimeDefault
+  priorityClassName: null
+  service:
+    type: ClusterIP
+    # -- The service port to expose. Unless overriden, this is automatically
+    # set to `443` when TLS is enabled, and `80` otherwise.
+    port: ~
+  resources: {}
+  # -- We usually recommend not to specify default resources and to leave
+  # this as a conscious choice for the user. This also increases chances
+  # charts run on environments with little resources, such as Minikube. If
+  # you do want to specify resources, uncomment the following lines, adjust
+  # them as necessary, and remove the curly braces after 'resources:'.
+  # limits:
+  #   cpu: 100m
+  #   memory: 128Mi
+  # requests:
+  #   cpu: 100m
+  #   memory: 128Mi
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  clickhouse:
+    client:
+      dsn: {}
+    tls:
+      ca: {}
+    credentials:
+      # -- The ClickHouse username to authenticate with.
+      username: timescape_server
+      # -- The name of the secret containing ClickHouse database credentials.
+      # Only read permissions (SELECT, EXISTS) are required.
+      # This secret MUST be created by the user, and MUST contain the following
+      # key:
+      #   - CLICKHOUSE_PASSWORD
+      secretName: "hubble-timescape-server-creds"
+  # -- queryCache configures the ClickHouse query cache.
+  queryCache:
+    # -- Whether to enable the query cache.
+    # Defaults to true if unset.
+    # Defaults to false if timescape lite or the push/stream API is enabled.
+    enabled: ~
+    # -- How long a query must run to be cached.
+    minQueryDuration: 1s
+    # -- How long a query result is cached.
+    ttl: 60s
+  # -- Roll out hubble-timescape-server pod when its configmap is updated.
+  rollOutPods: true
+  # -- TLS allows for configuring TLS for the server component.
+  tls:
+    # -- Enables TLS for timescape server.
+    enabled: false
+    auto:
+      # -- Enables automatically provisioning TLS certificates.
+      enabled: false
+      # -- Set the method to auto-generate certificates. Supported values:
+      # - cronJob:      This method uses a Kubernetes CronJob the generate any
+      #                 certificates not provided by the user at installation
+      #                 time.
+      # - certmanager:  This method use cert-manager to generate & rotate certificates.
+      method: ""
+      certmanager:
+        # -- Certificate issuer ref.
+        # See https://cert-manager.io/docs/usage/certificate/#creating-certificate-resources
+        issuerRef: ~
+        # -- Algorithm configuration for the generated certificate. See
+        # https://cert-manager.io/docs/usage/certificate/#creating-certificate-resources
+        privateKey:
+          algorithm: Ed25519
+    # -- The name of the secret containing TLS material.
+    # The secret must be of type `kubernetes.io/tls`.
+    secretName: "hubble-timescape-server-cert"
+    mtls:
+      # -- Enables mTLS for Timescape's server.
+      # When using RBAC with the 'tls' auth method, mTLS is enabled implicitly and this
+      # option does not need to be set.
+      enabled: false
+    # -- Custom CA to validate client certificates.
+    clientCA:
+      configMap:
+        name: ~
+        key: ca.crt
+  # -- the TCP port Timescape's server will bind to.
+  port: 4244
+  healthCheckPort: 8081
+  pprof:
+    # -- Enables pprof for Timescape's server.
+    enabled: true
+    address: localhost
+    port: 6060
+  gops:
+    # -- Enables gops for Timescape's server.
+    enabled: true
+    port: 9898
+  serviceAccount:
+    # -- Whether to create a Kubernetes service account for the Hubble
+    # Timescape server.
+    create: true
+    # -- The name of the Kubernetes service account to use for the Hubble
+    # Timescape server. Can be the name of an existing Kubernetes service
+    # account, in which case 'create' should be 'false'.
+    name: hubble-timescape-server
+    # -- Annotations for the Hubble Timescape server Kubernetes service account
+    annotations: ~
+  # -- Additional server volumes.
+  extraVolumes: []
+  # -- Additional server volumeMounts.
+  extraVolumeMounts: []
+  # -- Configures Oauth token-based authorization for Hubble Timescape server
+  # API endpoint.
+  rbac:
+    # -- TLS must be enabled for RBAC to work.
+    enabled: false
+    # -- Which authentication model to use. Must be one of "oidc" or "tls".
+    authMethod: oidc
+    # -- OIDC Server discovery endpoint URL.
+    # e.g. https://my-account.okta.com/oauth2/default/.well-known/openid-configuration
+    oidcURL: ~
+    # -- OIDC application clientID
+    oidcClientID: ~
+    # -- OIDC custom CA to verify against.
+    oidcCA:
+      configMap:
+        name: ~
+        key: "ca.crt"
+    # -- TLS allows for configuring TLS for the rbac component.
+    tls:
+      # -- Custom CA to validate client certificates when using the `tls`
+      # authentication method. Takes precedence over server.tls.clientCA
+      # when clientCA.configMap.name is set.
+      clientCA:
+        configMap:
+          name: ~
+          key: ca.crt
+    policy:
+      # -- Whether to enable logging of a user's roles to debug logs when they
+      # authenticate and make requests.
+      logRoles: false
+      # -- Configuration for the 'configMap' mode.
+      #
+      # The default is assuming that Timescape is ingesting data from another
+      # cluster than the one in which it is deployed.
+      #
+      # See also
+      # https://docs.isovalent.com/operations-guide/features/hubble-rbac/policy.html
+      configMap:
+        # -- Whether to create the configMap from where the mapping between
+        # scope and roles are read. Set it to 'false' when the configMap is
+        # created out-of-band.
+        create: true
+        # -- The list of roles to define.
+        roles: []
+        # - name: admin
+        #   rules:
+        #     - actions:
+        #         - "*"
+        #       kind: "*"
+        #       allowAllContexts: true
+        # -- The list of bindings between scope values and roles.
+        bindings: []
+        # - scope: groups
+        #   value: admins
+        #   role: admin
+        # -- The name of the config map containing the policy document. If
+        # managed out-of-band, the config map must have the name defined here.
+        name: hubble-timescape-rbac-policy
+        # -- The name of the config map key containing the policy document. If
+        # managed out-of-band, the config map must contain the policy document
+        # under this key.
+        key: hubble-timescape-rbac-policy.yaml
+  # -- Configure prometheus metrics, served at /metrics
+  prometheus:
+    enabled: true
+    port: 9090
+    prometheusRule:
+      # -- Create a PrometheusRule resource with predefined alerts and recording rules.
+      enabled: false
+      namespace: ~
+      labels: {}
+      annotations: {}
+      # -- List of alert names to disable.
+      disabledAlerts: []
+    serviceMonitor:
+      # -- Create a ServiceMonitor resource to scrape metrics (requires prometheus-operator CRDs to be available)
+      enabled: false
+      # -- Namespace to create the service monitor in. Defaults to namespace of the helm release.
+      namespace: ~
+      # -- Labels to add to the ServiceMonitor
+      labels: {}
+      # -- Annotations to add to the ServiceMonitor
+      annotations: {}
+      # -- Scrape interval for Prometheus to scrape metrics
+      scrapeInterval: 15s
+  # -- experimentalAPI allows configuring the server to serve experimental
+  # APIs. Experimental APIs may change at any time and without notice and thus
+  # are not recommended for production deployments.
+  experimentalAPI:
+    enabled: false
+  # -- Tracing configures OpenTelemetry tracing. Currently experimental.
+  tracing: &tracing
+    # -- Enables tracing functionality.
+    enabled: false
+    # -- Configures logging traces to stdout.
+    logTraces: false
+    #-- Configures client side sampling for traces.
+    sampling:
+      # -- Configures the span matcher sampler.
+      spanMatcherSampler:
+        # -- Matchers are used to determine if a span should be sampled.
+        # Example:
+        #  matchers:
+        #  - matcher:
+        #      name:
+        #       exact: "Query"
+        #    ratio: 1.0
+        #  - matcher:
+        #      name:
+        #       exact: "Query"
+        #      attributes:
+        #        query_name:
+        #       exact: "GetFlows"
+        #    ratio: 0.5
+        #  - matcher:
+        #      name:
+        #       exact: "Exec"
+        #    ratio: 0.1
+        #  - matcher:
+        #      name:
+        #       exact: "Exec"
+        #     attributes:
+        #       query_name:
+        #         regex: ".*Inserter"
+        #    ratio: 0.1
+        matchers: []
+    # --- Configures OTLP options.
+    # OTLP can also be configured using the standard OTLP environment variables.
+    # See https://opentelemetry.io/docs/concepts/sdk-configuration/otlp-exporter-configuration/ for documentation.
+    otlp:
+      # -- Enable exporting traces using OTLP.
+      enabled: false
+      # -- Override the default OTLP tracing endpoint.
+      # See https://opentelemetry.io/docs/concepts/sdk-configuration/otlp-exporter-configuration/#otel_exporter_otlp_endpoint for the defaults.
+      endpoint: ~
+      # -- transport configures the OTLP transport protocol. Either http or
+      # grpc. Defaults to grpc.
+      transport: grpc
+      # -- tls configure TLS related options for OTLP.
+      tls:
+        # -- enabled configure whether traces are sent over TLS or plaintext, set to false to disable TLS (insecure).
+        enabled: true
+        # -- OTLP custom CA to verify against.
+        ca:
+          configMap:
+            # -- The name of a configMap containing the CA to verify the OTLP TLS certificate
+            name: ~
+            # -- The key inside of the configMap containing the CA to verify the OTLP TLS certificate
+            key: "ca.crt"
+      # -- urlPath allows one to override the default URL path used for sending traces over HTTP.
+      # Ignored for gRPC.
+      urlPath: ~
+# -- Analyzer is a deployment responsible for running the policy engine at scheduled intervals
+# and insert the produced reports in the ClickHouse database.
+analyzer:
+  # -- Deploy Hubble Timescape analyzer to generate assessment reports.
+  enabled: true
+  # -- Configure log level for analyzer. Defaults to the top level logLevel if
+  # unset. Valid values are: trace, debug, info, warn and error.
+  logLevel: ~
+  replicaCount: 1
+  image:
+    override: ~
+    repository: quay.io/isovalent/hubble-timescape
+    tag: "v1.18.1"
+    pullPolicy: IfNotPresent
+    pullSecrets: []
+  # -- Configure extra environment variables for timescape analyzer.
+  extraEnv: []
+  podAnnotations: {}
+  podLabels: {}
+  podSecurityContext:
+    fsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    # readOnlyRootFilesystem: true
+    privileged: false
+    allowPrivilegeEscalation: false
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile:
+      type: RuntimeDefault
+  priorityClassName: null
+  resources: {}
+  # -- We usually recommend not to specify default resources and to leave
+  # this as a conscious choice for the user. This also increases chances
+  # charts run on environments with little resources, such as Minikube. If
+  # you do want to specify resources, uncomment the following lines, adjust
+  # them as necessary, and remove the curly braces after 'resources:'.
+  # limits:
+  #   cpu: 100m
+  #   memory: 128Mi
+  # requests:
+  #   cpu: 100m
+  #   memory: 128Mi
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  clickhouse:
+    client:
+      dsn: {}
+    tls:
+      ca: {}
+    credentials:
+      # -- The ClickHouse username to authenticate with.
+      username: timescape_analyzer
+      # -- The name of the secret containing ClickHouse database credentials.
+      # Write (INSERT) and read permissions (SELECT, EXISTS) are required.
+      # This secret MUST be created by the user, and MUST contain the following
+      # key:
+      #   - CLICKHOUSE_PASSWORD
+      secretName: "hubble-timescape-analyzer-creds"
+  # -- Roll out hubble-timescape-analyzer pod when its configmap is updated.
+  rollOutPods: true
+  healthCheckPort: 8081
+  pprof:
+    # -- Enables pprof for Timescape's analyzer.
+    enabled: true
+    address: localhost
+    port: 6060
+  gops:
+    # -- Enables gops for Timescape's analyzer.
+    enabled: true
+    port: 9898
+  # -- Configure prometheus metrics, served at /metrics
+  prometheus:
+    enabled: true
+    port: 9090
+    serviceMonitor:
+      # -- Create a ServiceMonitor resource to scrape metrics (requires prometheus-operator CRDs to be available)
+      enabled: false
+      # -- Namespace to create the service monitor in. Defaults to namespace of the helm release.
+      namespace: ~
+      # -- Labels to add to the ServiceMonitor
+      labels: {}
+      # -- Annotations to add to the ServiceMonitor
+      annotations: {}
+      # -- Scrape interval for Prometheus to scrape metrics
+      scrapeInterval: 15s
+  serviceAccount:
+    # -- Whether to create a Kubernetes service account for the Hubble
+    # Timescape analyzer.
+    create: true
+    # -- The name of the Kubernetes service account to use for the Hubble
+    # Timescape analyzer. Can be the name of an existing Kubernetes service
+    # account, in which case 'create' should be 'false'.
+    name: hubble-timescape-analyzer
+    # -- Annotations for the Hubble Timescape analyzer Kubernetes service account
+    annotations: ~
+  # -- Additional analyzer volumes.
+  extraVolumes: []
+  # -- Additional analyzer volumeMounts.
+  extraVolumeMounts: []
+  # -- The interval at which the analyzer will run and generate a new assessment report.
+  # When a run goes beyond this interval, the next one will start as soon as the running
+  # one is completed.
+  scheduleInterval: "24h"
+# -- The UI is a deployment that provides a frontend application to vizualize
+# data provided by the server component.
+ui:
+  enabled: true
+  logLevel: ~
+  replicaCount: 1
+  image:
+    override: ~
+    repository: quay.io/isovalent/hubble-timescape-ui
+    tag: "v1.18.1"
+    pullPolicy: IfNotPresent
+    pullSecrets: []
+  # -- Configure extra environment variables for ui.
+  extraEnv: []
+  podAnnotations: {}
+  podLabels: {}
+  podSecurityContext:
+    fsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    # readOnlyRootFilesystem: true
+    privileged: false
+    allowPrivilegeEscalation: false
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile:
+      type: RuntimeDefault
+  priorityClassName: null
+  service:
+    type: ClusterIP
+    # -- The service port to expose. Unless overriden, this is automatically
+    # set to `443` when TLS is enabled, and `80` otherwise.
+    port: ~
+    # -- Annotations to add to the UI service (e.g., for internal LoadBalancer)
+    annotations: {}
+  resources: {}
+  # -- We usually recommend not to specify default resources and to leave
+  # this as a conscious choice for the user. This also increases chances
+  # charts run on environments with little resources, such as Minikube. If
+  # you do want to specify resources, uncomment the following lines, adjust
+  # them as necessary, and remove the curly braces after 'resources:'.
+  # limits:
+  #   cpu: 100m
+  #   memory: 128Mi
+  # requests:
+  #   cpu: 100m
+  #   memory: 128Mi
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  # -- the TCP port the UI server will bind to.
+  port: 8000
+  pprof:
+    # -- Enables pprof for Timescape UI
+    enabled: true
+    address: localhost
+    port: 6060
+  gops:
+    # -- Enables gops for Timescape UI
+    enabled: true
+    port: 9898
+  serviceAccount:
+    # -- Whether to create a Kubernetes service account for the UI
+    create: true
+    # -- The name of the Kubernetes service account to use for the UI. Can be
+    # the name of an existing Kubernetes service account, in which case
+    # 'create' should be 'false'.
+    name: hubble-timescape-ui
+    # -- Annotations for the Hubble Timescape UI Kubernetes service account
+    annotations: ~
+  # -- Configure prometheus metrics, served at /metrics
+  prometheus:
+    enabled: true
+    port: 9090
+    serviceMonitor:
+      # -- Create a ServiceMonitor resource to scrape metrics (requires prometheus-operator CRDs to be available)
+      enabled: false
+      # -- Namespace to create the service monitor in. Defaults to namespace of the helm release.
+      namespace: ~
+      # -- Labels to add to the ServiceMonitor
+      labels: {}
+      # -- Annotations to add to the ServiceMonitor
+      annotations: {}
+      # -- Scrape interval for Prometheus to scrape metrics
+      scrapeInterval: 15s
+  # -- Roll out hubble-timescape-ui pod when its configmap is updated. When
+  # deployed as part of timescape-lite, lite.rolloutPods must also be true.
+  rollOutPods: true
+  tls:
+    # -- Configure the CA trust bundle used for the validation of the certificates.
+    # When enabled, it overrides the content of the 'ca.crt' field of the respective
+    # certificates, allowing for CA rotation with no down-time. Takes precedence over
+    # tls.caBundle.
+    caBundle:
+      # -- Enable the use of the CA trust bundle.
+      enabled: ~
+      # -- Name of the ConfigMap containing the CA trust bundle.
+      name: ~
+      # -- Entry of the ConfigMap containing the CA trust bundle.
+      key: ~
+      # -- Use a Secret instead of a ConfigMap.
+      useSecret: ~
+  auth:
+    # -- Whether to enable authentication for the UI. Will be set to true, if RBAC is enabled.
+    enabled: false
+    # -- UI session key is used to encrypt the UI session state. Should be a randomly
+    # generated password with at least 16 characters.
+    sessionKey:
+      secretName: hubble-timescape-ui
+      secretKey: session-key
+    oidc:
+      # -- OIDC Server discovery endpoint URL.
+      # e.g. https://my-account.okta.com/oauth2/default/.well-known/openid-configuration
+      # Will default to .server.rbac.oidcURL when RBAC is enabled.
+      issuerURL: ~
+      # -- OIDC custom CA to verify against.
+      # Will default to .server.rbac.oidcCA when RBAC is enabled.
+      issuerCA:
+        configMap:
+          name: ~
+          key: "ca.crt"
+      # -- OID redirect URL.
+      # The URL to redirect to, after the application was authorized. This need to be
+      # set to URI_USED_TO_ACCESS_TIMESCAPE_UI/oauth2/callback.
+      # When the Timescape UI is exposed through `.ui.ingress`, the redirect URL will be
+      # populated automatically.
+      redirectURL: ~
+      # -- OIDC application clientID.
+      clientID: ~
+      # -- OIDC application clientSecret.
+      clientSecret:
+        secretName: hubble-timescape-ui
+        secretKey: client-secret
+      # -- Client assertion type. Set to urn:ietf:params:oauth:client-assertion-type:jwt-bearer to use a JWT.
+      clientAssertionType: ~
+      # -- The file containing the client assertion to use if clientAssertionType is set.
+      clientAssertionFile: ~
+      # -- The OAuth2 scopes to send to the OIDC provider.
+      scopes: ["openid", "email", "offline_access"]
+      # -- OIDC user claim to extract from the id_token.
+      # The extracted value is used to uniquely identifier the user and perform
+      # authorization when RBAC is enabled.
+      idTokenUserClaim: email
+      # -- OIDC auth code redirect URL extra fields.
+      # Enrich the auth code redirect URL with extra fields in the query section.
+      # Such fields are sometimes required in environments that are using a non
+      # standard OIDC implementation.
+      extraFields: []
+      # extraFields:
+      #   - key: resource
+      #     value: example
+  ingress:
+    # -- Whether to create an 'Ingress' resource.
+    enabled: false
+    # -- The annotations to place on the 'Ingress' resource.
+    # If you see the following error in your Nginx ingress controller logs:
+    # 'upstream sent too big header while reading response header from upstream'
+    # Add the following annotation: 'nginx.ingress.kubernetes.io/proxy-buffer-size: 8k'
+    annotations: {}
+    # -- The host to use for the 'Ingress' resource.
+    host: hubble-timescape-ui.example.com
+    # -- The name of the 'IngressClass' cluster resource.
+    ingressClassName: ~
+    # -- TLS configuration for the 'Ingress' resource.
+    tls:
+      # -- Whether to enable TLS for the 'Ingress' resource.
+      enabled: false
+      # -- The name of the secret containing TLS material for the 'Ingress' resource.
+      secretName: ""
+  route:
+    # -- Whether to create a Gateway API 'HTTPRoute' resource.
+    enabled: false
+    # -- API version of the route resource.
+    # @default -- "gateway.networking.k8s.io/v1"
+    apiVersion: "gateway.networking.k8s.io/v1"
+    # -- Kind of the route resource.
+    # @default -- "HTTPRoute"
+    kind: "HTTPRoute"
+    # -- Labels to add to the route.
+    labels: {}
+    # -- Annotations to add to the route.
+    annotations: {}
+    # -- Parent references for the route.
+    parentRefs: []
+    # -- Hostnames for the route.
+    hostnames: []
+    # -- Additional rules for the route.
+    additionalRules: []
+    # -- Filters to apply to the route.
+    filters: []
+    # -- Path matches for the route.
+    matches:
+      - path:
+          type: PathPrefix
+          value: /
+  observability:
+    flows:
+      # -- Whether to enable the Flows page.
+      enabled: true
+    # -- Beta feature: this is currently in beta and may be subject to changes in future releases.
+    connections:
+      # -- Whether to enable Connections page (Beta).
+      enabled: false
+    # -- Beta feature: this is currently in beta and may be subject to changes in future releases.
+    topology:
+      # -- Whether to enable the Topology page (Beta).
+      enabled: false
+    # -- Beta feature: this is currently in beta and may be subject to changes in future releases.
+    explorer:
+      # -- Whether to enable the Explorer page. (Beta).
+      enabled: false
+  networkSecurity:
+    policies:
+      # -- Whether to enable the Network Policies page.
+      enabled: true
+    # -- Beta feature: this is currently in beta and may be subject to changes in future releases.
+    assessment:
+      # -- Whether to enable the Assessment page. (Beta).
+      enabled: false
+    # -- Beta feature: this is currently in beta and may be subject to changes in future releases.
+    enforcementPoints:
+      # -- Whether to enable the Enforcement Points page. (Beta).
+      enabled: false
+  health:
+    # -- Beta feature: this is currently in beta and may be subject to changes in future releases.
+    systemStatus:
+      # -- Whether to enable the System Status page. (Beta).
+      enabled: false
+  # -- Controls Isovalent Load Balancer (ILB) functionality (Beta)
+  # -- Beta feature: this is currently in beta and may be subject to changes in future releases.
+  loadBalancing:
+    # -- Whether to enable the Load Balancing page. (Beta).
+    enabled: false
+    clusterRole:
+      # -- Labels to add to the cluster role.
+      labels: {}
+      # -- Annotations to add to the cluster role.
+      annotations: {}
+    clusterRoleBinding:
+      # -- Labels to add to the cluster role binding.
+      labels: {}
+      # -- Annotations to add to the cluster role binding.
+      annotations: {}
+  # -- Additional ui volumes.
+  extraVolumes: []
+  # -- Additional ui volumeMounts.
+  extraVolumeMounts: []
+# -- Migrate is in charge of ensuring the database schema is up to date,
+# running database migrations if needed (e.g. after an upgrade). It runs as an
+# init container to the ingester deployment.
+migrate:
+  # -- Configure log level for migrate. Defaults to the top level logLevel if
+  # unset. Valid values are: trace, debug, info, warn and error.
+  logLevel: ~
+  image:
+    override: ~
+    repository: quay.io/isovalent/hubble-timescape
+    tag: "v1.18.1"
+    pullPolicy: IfNotPresent
+    pullSecrets: []
+  resources: {}
+  securityContext:
+    # readOnlyRootFilesystem: true
+    privileged: false
+    allowPrivilegeEscalation: false
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile:
+      type: RuntimeDefault
+  # -- Additional migrate volumes.
+  extraVolumes: []
+  # -- Additional migrate volumeMounts.
+  extraVolumeMounts: []
+  pprof:
+    # -- Enables pprof for Timescape's migrator.
+    enabled: true
+    address: localhost
+    port: 6060
+  gops:
+    # -- Enables gops for Timescape's migrator.
+    enabled: true
+    port: 9898
+  clickhouse:
+    client:
+      dsn: {}
+    tls:
+      ca: {}
+    credentials:
+      # -- The ClickHouse username to authenticate with.
+      username: timescape_migrate
+      # -- The name of the secret containing ClickHouse database admin
+      # credentials.
+      # DDL (CREATE, ALTER, DROP, TRUNCATE) and read/write permissions are
+      # provided.
+      # This secret MUST be created by the user, and MUST contain the following
+      # key:
+      #   - CLICKHOUSE_PASSWORD
+      secretName: "hubble-timescape-migrate-creds"
+  # -- Configures the time-to-live for all tables in the database. Events older
+  # than this value are not ingested. Events which are older than the TTL are
+  # automatically pruned from the database. This TTL value can be overridden by
+  # event type (see for example flows.ttl below).
+  # Defaults to 2 weeks or 1 hour if Timscape runs without persistent storage.
+  ttl: ~
+  # -- ConnectionLogs ingestion related configuration.
+  connectionLogs:
+    # -- Overrides the time-to-live for connectionLogs in the database.
+    # ConnectionLogs older than this value are not ingested. ConnectionLogs
+    # which are older than the TTL are automatically pruned from the database.
+    # defaults to migrate.ttl if unset.
+    ttl: ~
+    # -- The age at which connection logs are rolled up into hourly aggregates
+    # (0 means no hourly rollups). Must be at least 1 hour and less than
+    # connection-logs-daily-rollup-age and connectionLogs.ttl if it is set.
+    # The default value is 24 hours if unset.
+    hourlyRollupAge: ~
+    # -- The age at which connection logs are rolled up into daily aggregates
+    # (0 means no daily rollups). Must be at least 24 hours and less than
+    # connectionLogs.ttl if it is set.
+    # The default value is 7 days if unset.
+    dailyRollupAge: ~
+  # -- Hubble Flows ingestion related configuration.
+  flows:
+    # -- Overrides the time-to-live for flows in the database. Flows older than
+    # this value are not ingested. Flows which are older than the TTL are
+    # automatically pruned from the database.
+    ttl: ~
+  # -- Hubble K8s Events ingestion related configuration.
+  k8s:
+    # -- Overrides the time-to-live for k8s events in the database. See
+    # flows.ttl.
+    ttl: ~
+    # -- Configure the aggregation TTL for k8s events in the database.
+    # Events older than this will be aggregated together.
+    # If k8s.ttl is set, aggregationTTL must be less than k8s.ttl.
+    aggregationTTL: ~
+  # -- Hubble Assessment Reports related configuration.
+  assessmentReports:
+    # -- Sets the time-to-live for assessment reports in the database. This option
+    # is not configured with the value from ttl by default like flows/k8s.
+    # Defaults to 1 month.
+    ttl: ~
+  # -- System Status related configuration.
+  systemStatus:
+    # -- Sets the time-to-live for system status updates in the database.
+    # Defaults to 24 hours.
+    ttl: ~
+# -- Ingester is a deployment responsible for loading data from object storage
+# into the ClickHouse database for indexing.
+ingester:
+  # -- Deploy Hubble Timescape ingestion that loads data from object storage
+  # into the ClickHouse database.
+  enabled: true
+  # -- Configure log level for ingester. Defaults to the top level logLevel if
+  # unset. Valid values are: trace, debug, info, warn and error.
+  logLevel: ~
+  # -- There must be only one ingest pod at all time.
+  replicaCount: 1
+  # -- The ingester deployment update strategy.
+  updateStrategy:
+    type: Recreate
+  image:
+    override: ~
+    repository: quay.io/isovalent/hubble-timescape
+    tag: "v1.18.1"
+    pullPolicy: IfNotPresent
+    pullSecrets: []
+  extraEnv: []
+  podAnnotations: {}
+  podLabels: {}
+  podSecurityContext:
+    fsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    # readOnlyRootFilesystem: true
+    privileged: false
+    allowPrivilegeEscalation: false
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile:
+      type: RuntimeDefault
+  priorityClassName: null
+  service:
+    type: ClusterIP
+    pushPort: 4260
+    streamPort: 4261
+  resources: {}
+  # -- We usually recommend not to specify default resources and to leave
+  # this as a conscious choice for the user. This also increases chances
+  # charts run on environments with little resources, such as Minikube. If
+  # you do want to specify resources, uncomment the following lines, adjust
+  # them as necessary, and remove the curly braces after 'resources:'.
+  # limits:
+  #   cpu: 100m
+  #   memory: 128Mi
+  # requests:
+  #   cpu: 100m
+  #   memory: 128Mi
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  # -- Additional ingester volumes.
+  extraVolumes: []
+  # -- Additional ingester volumeMounts.
+  extraVolumeMounts: []
+  clickhouse:
+    client:
+      dsn: {}
+    tls:
+      ca: {}
+    credentials:
+      # -- The ClickHouse username to authenticate with.
+      username: timescape_ingester
+      # -- The name of the secret containing ClickHouse and (optionally) object
+      # storage credentials.
+      #
+      # For ClickHouse, write (INSERT) and read permissions (SELECT, EXISTS) are
+      # required. For object storage, only read permissions are required.
+      #
+      # This secret MUST be created by the user, and MUST contain the following
+      # key:
+      #   - CLICKHOUSE_PASSWORD
+      #
+      # The object storage access can be provided either via the ServiceAccount
+      # or credentials in this secret. In the latter case, it should contain
+      # one of the following sets of keys:
+      # For AWS S3:
+      #   - AWS_ACCESS_KEY_ID
+      #   - AWS_SECRET_ACCESS_KEY
+      #   - AWS_REGION
+      # For Azure blob storage:
+      #   - AZURE_STORAGE_ACCOUNT
+      # as well as at least one of:
+      #   - AZURE_STORAGE_KEY
+      #   - AZURE_STORAGE_SAS_TOKEN
+      # For Google Cloud Storage:
+      #   - google-credentials.json
+      secretName: "hubble-timescape-ingester-creds"
+  # -- Roll out hubble-timescape-ingester pod when its configmap is updated.
+  rollOutPods: true
+  healthCheckPort: 8080
+  pprof:
+    # -- Enables pprof for Timescape's ingester.
+    enabled: true
+    address: localhost
+    port: 6060
+  gops:
+    # -- Enables gops for Timescape's ingester.
+    enabled: true
+    port: 9898
+  # -- Tracing configures OpenTelemetry tracing. Currently experimental.
+  tracing: *tracing
+  bucket:
+    # -- The datalake URL. Every parts beyond the bucket name is interpreted as a
+    # bucket prefix, that is gs://my-bucket/dir/subdir is equivalent to
+    # gs://my-bucket?prefix=dir%2Fsubdir. Here are several examples:
+    #
+    # • s3://my-bucket (Amazon S3)
+    # • gs://my-bucket (Google Cloud Storage)
+    # • azblob://my-container (Azure Blob Storage)
+    # • s3://mybucket?endpoint=my.minio.local:8080&disableSSL=true&s3ForcePathStyle=true (S3-Compatible Servers)
+    uri: ""
+    # -- A bucket prefix template to generate ingest paths. Exporters will
+    # usually follow a pattern for uploaded files starting with the datetime of
+    # upload in the object path. When non-empty, this pattern is used to
+    # efficiently list only files to be ingested from the bucket. The following
+    # format specifiers are supported:
+    #
+    # • %Y the year, matching exactly four digits (0001-9999)
+    # • %m the month matching exactly two digits (01-12)
+    # • %d the day matching exactly two digits (01-31)
+    #
+    # Note that the literal percent (%) character is not supported in
+    # prefixPattern. Here are several examples:
+    #
+    # • %Y-%m-%d (hubble-s3 exporter)
+    # • %Y/%m/%d/ (fluent-bit default s3_key_format)
+    # • %Y%m%d (fluentd default time_slice_format)
+    prefixPattern: ""
+    # -- A cluster name to set on ingested events. If set the cluster name in flows
+    # and events during ingestion is overwritten to the provided name.
+    clusterName: ""
+    tls:
+      ca:
+        configMap:
+          # -- The name of a configMap containing the CA to verify the S3 API TLS certificate
+          name: ~
+          # -- The key inside of the configMap containing the CA to verify the S3 API TLS certificate
+          key: "ca.crt"
+  # -- Hubble Flows ingestion related configuration.
+  flows:
+    # -- Whether to enable ingestion of Hubble Flows.
+    enabled: true
+    # -- If a pattern is configured, it will be used to filter objects based on
+    # their key, rather than filtering after it's downloaded.
+    # Overrides the builtin default patterns for flows.
+    # Pattern must be a valid re2 regular expression.
+    # For example: `hubble\.log`
+    pattern: ~
+  # -- Hubble K8s Events ingestion related configuration.
+  k8s:
+    # -- Whether to enable ingestion of k8s events.
+    enabled: true
+    # -- If a pattern is configured, it will be used to filter objects based on
+    # their key, rather than filtering after it's downloaded.
+    # Overrides the builtin default patterns for k8s events.
+    # Pattern must be a valid re2 regular expression.
+    # For example: `k8s-events\.log`
+    pattern: ~
+  systemStatus:
+    # -- Whether to enable ingestion of system status updates.
+    enabled: true
+    # -- If a pattern is configured, it will be used to filter objects based on
+    # their key, rather than filtering after it's downloaded.
+    # Overrides the builtin default patterns for system status events.
+    # Pattern must be a valid re2 regular expression.
+    # For example: `status\.log`
+    pattern: ~
+  # -- Connection logs ingestion related configuration.
+  connectionLogs:
+    # -- Whether to enable ingestion of connection logs.
+    enabled: true
+    # -- If a pattern is configured, it will be used to filter objects based on
+    # their key, rather than filtering after it's downloaded.
+    # Overrides the builtin default patterns for flows.
+    # Pattern must be a valid re2 regular expression.
+    # For example: `connectionlog\.log`
+    pattern: ~
+  # -- *experimental* Whether to delete files from object storage after successfully
+  # ingesting them - will default to `true` in Timescape Lite mode.
+  deleteAfterIngest: ~
+  # -- How many times a file can be failed to be ingested before it gets
+  # skipped when filtering objects in the bucket.
+  maxAllowedIngestErrors: 3
+  # -- *experimental* Configuration for the timescape ingester server.
+  # Must be enabled to use the Push API or the Stream API. Automatically enabled if
+  # lite.enabled is true.
+  server:
+    # -- The authentication method to use for the ingester server.
+    # Supported values:
+    # - none:        No authentication.
+    # - basic-auth:  Basic authentication using a username and password. When set, the
+    #                grpc server is automatically disabled because it does not support
+    #                basic authentication.
+    # - mtls:        Mutual TLS authentication using client certificates. When set, a
+    #                client CA certificate must be configured under `ingester.server.tls.clientCA`.
+    authMethod: none
+    http:
+      # -- Whether to enable the HTTP server for the Push API.
+      enabled: false
+      basicAuth:
+        # -- The BasicAuth username to authenticate to the timescape ingester server.
+        username: timescape_push_api
+        # -- The name of the secret containing the BasicAuth password to authenticate
+        # to the timescape ingester server
+        #
+        # This secret MUST be created by the user, and MUST contain the following
+        # key:
+        #   - PUSH_API_PASSWORD
+        secretName: "hubble-timescape-ingester-creds"
+    grpc:
+      # -- *experimental* Whether to enable the gRPC server for the Stream API.
+      enabled: false
+      # -- The interval at which the ingester should flush events to the database.
+      flushInterval: "5s"
+    tls:
+      # -- Enables TLS for timescape server.
+      enabled: false
+      auto:
+        # -- Enables automatically provisioning TLS certificates.
+        enabled: false
+        # -- Set the method to auto-generate certificates. Supported values:
+        # - cronJob:      This method uses a Kubernetes CronJob the generate any
+        #                 certificates not provided by the user at installation
+        #                 time.
+        # - certmanager:  This method use cert-manager to generate & rotate certificates.
+        method: ""
+        certmanager:
+          # -- Certificate issuer ref.
+          # See https://cert-manager.io/docs/usage/certificate/#creating-certificate-resources
+          issuerRef: ~
+          # -- Algorithm configuration for the generated certificate. See
+          # https://cert-manager.io/docs/usage/certificate/#creating-certificate-resources
+          privateKey:
+            algorithm: Ed25519
+      # -- The name of the secret containing TLS material.
+      # The secret must be of type `kubernetes.io/tls`.
+      secretName: "hubble-timescape-ingester-server-cert"
+      # -- Custom CA to validate client certificates.
+      clientCA:
+        configMap:
+          name: ~
+          key: ca.crt
+  k8sImporter:
+    # -- *experimental* Whether to enable the k8s event watcher for the K8s Importer.
+    enabled: false
+    # -- A cluster name to set on imported events. If set, the cluster name in
+    # events is overwritten to the provided name.
+    clusterName: ""
+    # -- The interval at which the K8s Exporter should flush k8s events to the database.
+    flushInterval: "5s"
+    # enable importing Cilium Network Policy events.
+    ciliumNetworkPolicies: true
+    # enable importing k8s NetworkPolicy events
+    k8sNetworkPolicies: true
+    # enable importing k8s Endpoint events.
+    k8sEndpoints: false
+    # enable importing Cilium Endpoint events.
+    ciliumEndpoints: false
+    # enable importing Cilium Identity events.
+    ciliumIdentities: true
+    # enable importing Tetragon Network Policy events.
+    tetragonNetworkPolicies: false
+    # enable importing Cilium Node events.
+    ciliumNodes: true
+    # enable importing Tetragon Node events.
+    tetragonNodes: false
+    # enable importing SmartSwitch events
+    smartSwitches: false
+    # enable importing SmartSwitchNetworkPolicy events
+    smartSwitchNetworkPolicies: false
+  # -- Configure asynchronous inserts to insert data.
+  asyncInsert:
+    enabled: true
+    # -- The maximum timeout since the first INSERT query before inserting collected data, when using asynchronous inserts.
+    busyTimeout: "2s"
+    # -- The maximum size of the unparsed data in bytes collected per query before being inserted.
+    maxDataSize: 104857600
+  # -- The number of entries to insert in the database per insertion block.
+  # The minimum recommended value is 1,000. This number can be increased to
+  # potentially improve ingestion performance at the cost of memory usage.
+  # Values above 100,000 are not recommended.
+  batchSize: 10_000
+  # -- The interval at which the ingester will log a progress summary.
+  reportInterval: "1s"
+  # -- The interval at which the ingester will run. When a run goes beyond this
+  # interval, the next one will start as soon as the running one is completed.
+  scheduleInterval: "5m"
+  # -- the timeout for s3.ListObjects or the equivalent API call for other
+  # providers
+  listObjectsTimeout: "1m"
+  # -- The maximum lookback duration when listing objects in the bucket, zero means no limit.
+  # This relies on having a bucket pattern configured.
+  # If no bucket pattern is configured this setting has no effect.
+  # If the value is higher than the largest TTL configured for ingestion, it
+  # will be capped to that TTL.
+  maxLookback: "24h"
+  # -- Amount of files from storage to collect before checking the DB for their
+  # ingestion status.
+  filterBatchSize: 100
+  # -- Maximum amount of time to wait between the checking the DB for a files
+  # ingestion status if the filterBatchSize has not been reached.
+  filterBatchWindow: "10s"
+  # -- Disable default ingestion patterns.
+  # When true, the ingester will not use builtin patterns to classify files.
+  # The default pattern for hubble flows is: /(hubble|flows?)\.(json|jsonl|gz|gzip|log)/
+  # The default pattern for k8s events is: /k8s-events?\.(json|jsonl|gz|gzip|log)/
+  disableDefaultIngestPatterns: false
+  # -- Disable required ingestion pattern matching.
+  # If false, then the ingester skips files not matching configured file patterns.
+  disableFileMustMatchIngestPattern: false
+  serviceAccount:
+    # -- Whether to create a Kubernetes service account for the Hubble
+    # Timescape ingester.
+    create: true
+    # -- The name of the Kubernetes service account to use for the Hubble
+    # Timescape ingester.
+    # Can be the name of an existing Kubernetes service account, in which case
+    # 'create' should be 'false'.
+    name: hubble-timescape-ingester
+    # -- Annotations for the Hubble Timescape ingester Kubernetes service account
+    annotations: ~
+  # -- Configure prometheus metrics, served at /metrics
+  prometheus:
+    enabled: true
+    port: 9090
+    prometheusRule:
+      # -- Create a PrometheusRule resource with predefined alerts and recording rules.
+      enabled: false
+      namespace: ~
+      labels: {}
+      annotations: {}
+      # -- List of alert names to disable.
+      disabledAlerts: []
+      rules:
+        TimescapeEventDataStale:
+          # -- Specify gracePeriod to override the default TimescapeEventDataStale gracePeriod of 3x the ingester scheduleInterval
+          gracePeriod: ~
+        TimescapeIngestionDurationHigh:
+          gracePeriod: 5m
+    serviceMonitor:
+      # -- Create a ServiceMonitor resource to scrape metrics (requires prometheus-operator CRDs to be available)
+      enabled: false
+      # -- Namespace to create the service monitor in. Defaults to namespace of the helm release.
+      namespace: ~
+      # -- Labels to add to the ServiceMonitor
+      labels: {}
+      # -- Annotations to add to the ServiceMonitor
+      annotations: {}
+      # -- Scrape interval for Prometheus to scrape metrics
+      scrapeInterval: 15s
+# -- *experimental* Timescape Lite is the All-in-one Timescape deployment mode. It allows running
+# all Timescape component such as server, ingester, migrator, and trimmer in one single
+# StatefulSet
+lite:
+  enabled: false
+  # -- Configure log level for Timescape lite. Defaults to the top level
+  # logLevel if unset. Valid values are: trace, debug, info, warn and error.
+  logLevel: ~
+  image:
+    override: ~
+    repository: quay.io/isovalent/hubble-timescape-lite
+    tag: "v1.18.1"
+    pullPolicy: IfNotPresent
+    pullSecrets: []
+  podAnnotations: {}
+  podLabels: {}
+  podSecurityContext:
+    fsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    # readOnlyRootFilesystem: true
+    privileged: false
+    allowPrivilegeEscalation: false
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile:
+      type: RuntimeDefault
+  priorityClassName: null
+  resources: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  rollOutPods: true
+  serviceAccount:
+    # -- Whether to create a Kubernetes service account for the Timescape Lite deployment.
+    create: true
+    # -- The name of the Kubernetes service account to use for the Timescape Lite deployment.
+    # Can be the name of an existing Kubernetes service account, in which case
+    # 'create' should be 'false'.
+    name: hubble-timescape-lite
+    # -- Annotations for the Hubble Timescape Lite Kubernetes service account
+    annotations: ~
+  # -- Additional lite volumes.
+  extraVolumes: []
+  # -- Additional lite volumeMounts.
+  extraVolumeMounts: []
+  prometheus:
+    enabled: true
+    port: 9090
+    serviceMonitor:
+      # -- Create a ServiceMonitor resource to scrape metrics (requires prometheus-operator CRDs to be available).
+      enabled: false
+      # -- Namespace to create the service monitor in. Defaults to namespace of the helm release.
+      namespace: ~
+      # -- Labels to add to the ServiceMonitor
+      labels: {}
+      # -- Annotations to add to the ServiceMonitor
+      annotations: {}
+      # -- Scrape interval for Prometheus to scrape metrics
+      scrapeInterval: 15s
+  healthCheckPort: 8083
+  pprof:
+    # -- Enables pprof for Timescape's server.
+    enabled: true
+    address: localhost
+    port: 6060
+  gops:
+    # -- Enables gops for Timescape's server.
+    enabled: true
+    port: 9898
+  # -- Tracing configures OpenTelemetry tracing. Currently experimental.
+  tracing: *tracing
+  clickhouse:
+    enabled: true
+    # -- Roll out hubble-timescape-lite pod when the clickhouse configmap is updated
+    # (lite.rolloutPods must also be true).
+    rollOutPods: true
+    # -- Configure prometheus metrics, served at /metrics
+    prometheus:
+      enabled: true
+      serviceMonitor:
+        # -- Create a ServiceMonitor resource to scrape metrics (requires prometheus-operator CRDs to be available)
+        enabled: false
+        # -- Namespace to create the service monitor in. Defaults to namespace of the helm release.
+        namespace: ~
+        # -- Labels to add to the ServiceMonitor
+        labels: {}
+        # -- Annotations to add to the ServiceMonitor
+        annotations: {}
+        # -- Scrape interval for Prometheus to scrape metrics
+        scrapeInterval: 15s
+      prometheusRule:
+        # -- Create a PrometheusRule resource with predefined alerts and recording rules.
+        enabled: false
+        rules:
+          # -- Alert that will fire if the percentage of available space of the ClickHouse
+          # volume is predicted to fall below the configured threshold in the configured
+          # predictionTime.
+          #
+          # By default this means if we predict less than 20% available space in 48 hours.
+          TimescapeClickhouseVolumeFillingUp:
+            enabled: true
+            threshold: 0.2
+            predictionTime: 48h
+      tableMetrics:
+        # -- Adds an endpoint to the ServiceMonitor resource to scrape table metrics
+        # (requires ServiceMonitor to be enabled).
+        enabled: false
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+      runAsGroup: 101
+      runAsNonRoot: true
+      runAsUser: 101
+      seccompProfile:
+        type: RuntimeDefault
+    podSecurityContext:
+      # clickhouse GID is 101, and mounted files need to have the correct
+      # permissions for clickhouse to read them
+      fsGroup: 101
+      seccompProfile:
+        type: RuntimeDefault
+    volumes:
+      # Configure volume for clickhouse. If no data volume is specified, clickhouse will
+      # run on an ephemeral disk.
+      #
+      # Example:
+      #
+      # data:
+      #   size: 2Gi
+      #   storageClassName: ssd
+      data: ~
+    resources: {}
+    # -- Additional clickhouse volumes.
+    extraVolumes: []
+    # -- Additional clickhouse volumeMounts.
+    extraVolumeMounts: []
+# -- Optional ConfigMap with a Grafana dashboard. It can be mounted in a Grafana
+# deployment, or loaded automatically using the Grafana's sidecar for dashboards
+# (https://github.com/grafana/helm-charts/tree/main/charts/grafana#sidecar-for-dashboards)
+grafana:
+  dashboards:
+    enabled: false
+    # -- Namespace to create the ConfigMap in. Defaults to namespace of the helm release.
+    namespace: ~
+    # -- Labels to add to the ConfigMap. If using the dashboards sidecar, they
+    # must include the label used to discover dashboards.
+    labels:
+      grafana_dashboard: "1"
+    # -- Annotations to add to the ConfigMap
+    annotations: {}
+config:
+  # -- Buckets configuration. Incompatible with ingester.bucket.uri.
+  # If you have multiple buckets, or different prefixes containing files to be
+  # ingested, you should configure it using config.buckets.
+  #
+  # Example:
+  #
+  #buckets:
+  #  -
+  #    # -- The datalake URL. Every parts beyond the bucket name is interpreted as a
+  #    # bucket prefix, that is gs://my-bucket/dir/subdir is equivalent to
+  #    # gs://my-bucket?prefix=dir%2Fsubdir. Here are several examples:
+  #    #
+  #    # • s3://my-bucket (Amazon S3)
+  #    # • gs://my-bucket (Google Cloud Storage)
+  #    # • azblob://my-container (Azure Blob Storage)
+  #    # • s3://mybucket?endpoint=my.minio.local:8080&disableSSL=true&s3ForcePathStyle=true (S3-Compatible Servers)
+  #    uri: s3://timescape
+  #    # top level configs for the whole bucket
+  #    k8sEvents:
+  #      # -- If a pattern is configured, it will be used to filter objects based on
+  #      # their key, rather than filtering after it's downloaded.
+  #      # Pattern must be a valid re2 regular expression.
+  #      pattern: "k8s-events\\.log"
+  #      # -- If disabled is true, events matching the pattern will not be ingested.
+  #      disabled: false
+  #    flows:
+  #      # -- If a pattern is configured, it will be used to filter objects based on
+  #      # their key, rather than filtering after it's downloaded.
+  #      # Pattern must be a valid re2 regular expression.
+  #      pattern: "hubble\\.log"
+  #      # -- If disabled is true, events matching the pattern will not be ingested.
+  #      disabled: false
+  #    systemStatus:
+  #      # -- If a pattern is configured, it will be used to filter objects based on
+  #      # their key, rather than filtering after it's downloaded.
+  #      # Pattern must be a valid re2 regular expression.
+  #      pattern: "system-status\\.log"
+  #      # -- If disabled is true, events matching the pattern will not be ingested.
+  #      disabled: false
+  #    connectionLogs:
+  #      # -- If a pattern is configured, it will be used to filter objects based on
+  #      # their key, rather than filtering after it's downloaded.
+  #      # Pattern must be a valid re2 regular expression.
+  #      pattern: "connectonlogs\\.log"
+  #      # -- If disabled is true, events matching the pattern will not be ingested.
+  #      disabled: false
+  #    # -- Override the cluster name for the objects ingested from this bucket.
+  #    overrideClusterName: 'cluster-1'
+  #    # -- Paths are the bucket paths within the bucket to scan for files.
+  #    paths:
+  #      -
+  #        # -- A bucket prefix template to generate ingest paths. Exporters will
+  #        # usually follow a pattern for uploaded files starting with the datetime of
+  #        # upload in the object path. When non-empty, this pattern is used to
+  #        # efficiently list only files to be ingested from the bucket. The following
+  #        # format specifiers are supported:
+  #        #
+  #        # • %Y the year, matching exactly four digits (0001-9999)
+  #        # • %m the month matching exactly two digits (01-12)
+  #        # • %d the day matching exactly two digits (01-31)
+  #        #
+  #        # Note that the literal percent (%) character is not supported in
+  #        # prefixPattern. Here are several examples:
+  #        #
+  #        # • %Y-%m-%d (hubble-s3 exporter)
+  #        # • %Y/%m/%d/ (fluent-bit default s3_key_format)
+  #        # • %Y%m%d (fluentd default time_slice_format)
+  #        prefixPattern: "hubble-events/%Y/%m/%d"
+  #        # -- Override the cluster name for the objects ingested from this bucket within this prefix.
+  #        # overrideClusterName: 'cluster-1'
+  #
+  # # Experimental
+  #
+  # Notice: this functionality is EXPERIMENTAL and may be changed or removed in a
+  # later release.
+  #
+  # bucketName must be unique within the same provider+region so each bucket
+  # can be uniquely identified.
+  buckets: []
+# -- TLS allows for configuring TLS for the server, the Push API and clickhouse
+tls:
+  # -- Enables TLS for all enabled components that don't explicitly disable TLS
+  enabled: false
+  auto:
+    # -- Enables automatically provisioning TLS certificates.
+    enabled: false
+    # -- Set the method to auto-generate certificates. Supported values:
+    # - cronJob:      This method uses a Kubernetes CronJob the generate any
+    #                 certificates not provided by the user at installation
+    #                 time.
+    # - certmanager:  This method use cert-manager to generate & rotate certificates.
+    method: ""
+    certmanager:
+      # -- Certificate issuer ref.
+      # See https://cert-manager.io/docs/usage/certificate/#creating-certificate-resources
+      issuerRef: ~
+      # -- Algorithm configuration for the generated certificate. See
+      # https://cert-manager.io/docs/usage/certificate/#creating-certificate-resources
+      privateKey:
+        algorithm: ECDSA
+  # -- Configure the CA trust bundle used for the validation of the certificates.
+  # When enabled, it overrides the content of the 'ca.crt' field of the respective
+  # certificates, allowing for CA rotation with no down-time.
+  caBundle:
+    # -- Enable the use of the CA trust bundle.
+    enabled: false
+    # -- Name of the ConfigMap containing the CA trust bundle.
+    name: ~
+    # -- Entry of the ConfigMap containing the CA trust bundle.
+    key: ca.crt
+    # -- Use a Secret instead of a ConfigMap.
+    useSecret: false
+k8sExporter:
+  fullnameOverride: hubble-timescape-k8s-exporter
+  enabled: false
+# -- Whether to use native Kubernetes gRPC-based probes (startup, liveness, readiness)
+# which are stable since Kubernetes 1.27. If false, fallback to tcpSocket probes.
+useKubernetesGrpcProbes: true

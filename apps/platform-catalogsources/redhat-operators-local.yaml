@@ -1,0 +1,19 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+# Red Hat Operators CatalogSource (local mirror)
+# Used by subscriptions that reference "redhat-operators-local"
+apiVersion: operators.coreos.com/v1alpha1
+kind: CatalogSource
+metadata:
+  name: redhat-operators-local
+  namespace: openshift-marketplace
+spec:
+  sourceType: grpc
+  image: registry.example.com:5000/redhat/redhat-operator-index:v4.19
+  displayName: Red Hat Operators (local mirror)
+  publisher: Red Hat (local mirror)
+  updateStrategy:
+    registryPoll:
+      interval: 30m

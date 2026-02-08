@@ -1,0 +1,75 @@
+{{- if and .Values.server.enabled (not .Values.lite.enabled) }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "hubble-timescape-server.name" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hubble-timescape-server.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    log-level: {{ .Values.server.logLevel | default .Values.logLevel }}
+    {{- if .Values.server.prometheus.enabled }}
+    prometheus-serve-addr: ":{{ .Values.server.prometheus.port }}"
+    {{- end }}
+    pprof: {{ .Values.server.pprof.enabled }}
+    pprof-address: {{ .Values.server.pprof.address | quote }}
+    pprof-port: {{ .Values.server.pprof.port }}
+    gops: {{ .Values.server.gops.enabled }}
+    gops-port: {{ .Values.server.gops.port }}
+    {{- $clickhouse := merge dict .Values.server.clickhouse .Values.clickhouse (dict "tls" .Values.tls) }}
+    {{- if (include "hubble-timescape.clickhouse-has-custom-ca" $clickhouse) }}
+    tls-clickhouse-ca-files: "/var/lib/hubble-timescape/clickhouse-certs/clickhouse-ca.crt"
+    {{- end }}
+    log-query-progress: {{ $clickhouse.client.progress.log | quote }}
+    enable-clickhouse-server-logs: {{ $clickhouse.client.serverLogs.log | quote }}
+    health-listen-address: ":{{ .Values.server.healthCheckPort }}"
+    {{- include "hubble-timescape-server.config" . | nindent 4 }}
+    {{- include "hubble-timescape-tracing.config" .Values.server | nindent 4 }}
+{{- end }}
+
+{{- define "hubble-timescape-server.config" -}}
+{{- $tls := merge dict .Values.server.tls .Values.tls -}}
+listen-address: {{ printf ":%v" .Values.server.port }}
+{{- if $tls.enabled }}
+enable-tls: true
+tls-cert-file: /var/lib/hubble-timescape/tls/server.crt
+tls-key-file: /var/lib/hubble-timescape/tls/server.key
+{{- $tlsClientCA := .Values.server.tls.clientCA }}
+{{- if .Values.server.rbac.tls.clientCA.configMap.name }}
+{{- $tlsClientCA = .Values.server.rbac.tls.clientCA }}
+{{- end }}
+{{- if $tlsClientCA.configMap.name }}
+tls-client-ca-files: /var/lib/hubble-timescape/tls/client-ca.crt
+{{- end }}
+tls-require-client-cert: {{ .Values.server.tls.mtls.enabled }}
+{{- else }}
+enable-tls: false
+{{- end }}
+enable-experimental-api: {{ .Values.server.experimentalAPI.enabled }}
+
+{{- $queryCacheDisabled := (eq (include "hubble-timescape-server.query-cache.disabled" .) "true") }}
+query-cache-disabled: {{ $queryCacheDisabled }}
+{{- if not $queryCacheDisabled }}
+query-cache-min-query-duration: {{ .Values.server.queryCache.minQueryDuration }}
+query-cache-ttl: {{ .Values.server.queryCache.ttl }}
+{{- end }}
+rbac:
+  {{- include "hubble-timescape-server.rbac.config" . | nindent 2 }}
+{{- end }}
+
+{{- define "hubble-timescape-server.rbac.config" -}}
+enabled: {{ .Values.server.rbac.enabled }}
+{{- if .Values.server.rbac.enabled }}
+auth-types: {{ .Values.server.rbac.authMethod }}
+oidc-issuer-url: {{ .Values.server.rbac.oidcURL }}
+{{- if .Values.server.rbac.oidcCA.configMap.name }}
+oidc-issuer-ca: /var/lib/hubble-timescape/tls/oidc-provider-ca.pem
+{{- end }}
+oidc-client-ids: {{ .Values.server.rbac.oidcClientID }}
+policy-mode: config
+policy-file: {{ printf "/etc/timescape-rbac/policy/%s" .Values.server.rbac.policy.configMap.key }}
+policy-log-roles: {{ .Values.server.rbac.policy.logRoles }}
+{{- end }}
+{{- end }}

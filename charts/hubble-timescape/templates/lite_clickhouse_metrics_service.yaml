@@ -1,0 +1,27 @@
+{{- if and .Values.lite.clickhouse.enabled .Values.lite.enabled .Values.lite.clickhouse.prometheus.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "hubble-timescape-lite.name" . }}-clickhouse-metrics
+  namespace: {{ .Release.Namespace }}
+  labels:
+    container: clickhouse
+    {{- include "hubble-timescape-lite.labels" . | nindent 4 }}
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8001"
+spec:
+  ports:
+    - name: metrics
+      port: 8001
+      targetPort: ch-metrics
+      protocol: TCP
+    - name: http
+      port: 8123
+      targetPort: ch-http
+      protocol: TCP
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    {{- include "hubble-timescape-lite.selectorLabels" . | nindent 4 }}
+{{- end }}

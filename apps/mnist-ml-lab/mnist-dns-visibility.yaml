@@ -1,0 +1,33 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: mnist-dns-visibility
+spec:
+  endpointSelector:
+    matchLabels:
+      io.kubernetes.pod.namespace: mnist-ml-lab
+  enableDefaultDeny:
+    egress: false
+    ingress: false
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            dns.operator.openshift.io/daemonset-dns: default
+            k8s:io.kubernetes.pod.namespace: openshift-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+            - port: "5353"
+              protocol: UDP
+            - port: "5353"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"

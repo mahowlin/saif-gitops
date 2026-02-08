@@ -1,0 +1,18 @@
+{{- if .Values.server.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "hubble-timescape-server.service.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hubble-timescape-server.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.server.service.type }}
+  ports:
+    - protocol: TCP
+      name: grpc
+      port: {{ include "hubble-timescape-server.service.port" . }}
+      targetPort: server-grpc
+  selector:
+    {{- include "hubble-timescape-server.selectorLabels" . | nindent 4 }}
+{{- end }}

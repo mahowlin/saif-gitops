@@ -1,0 +1,6 @@
+dependencies:
+- name: hubble-k8s-exporter
+  repository: file://charts/hubble-k8s-exporter
+  version: 0.0.0
+digest: sha256:dd5079401e5e6850fc4a78803e3ab0d60cd03b3a6dae43952ff86bf3e8a93c39
+generated: "2025-07-09T18:41:52.862199699+02:00"

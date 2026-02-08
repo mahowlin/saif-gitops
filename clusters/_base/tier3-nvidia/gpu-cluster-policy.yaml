@@ -1,0 +1,37 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+# GPU ClusterPolicy - Configures GPU Operator components
+# Deployed AFTER gpu-operator installs the CRD (sync-wave 1)
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: gpu-cluster-policy
+  namespace: openshift-gitops
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"  # After gpu-operator (wave -2)
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/mahowlin/saif-gitops.git
+    targetRevision: main
+    path: apps/gpu-cluster-policy
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: nvidia-gpu-operator
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+      - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 10
+      backoff:
+        duration: 60s
+        factor: 2
+        maxDuration: 10m

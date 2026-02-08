@@ -1,0 +1,14 @@
+{{- if and .Values.server.enabled .Values.server.rbac.enabled .Values.server.rbac.policy.configMap.create }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  labels:
+    {{- include "hubble-timescape-server.labels" . | nindent 4 }}
+  name: {{ .Values.server.rbac.policy.configMap.name }}
+  namespace: {{ .Release.Namespace }}
+data:
+  {{ .Values.server.rbac.policy.configMap.key }}: |
+    roles: {{ toYaml .Values.server.rbac.policy.configMap.roles | nindent 6 }}
+    bindings: {{ toYaml .Values.server.rbac.policy.configMap.bindings | nindent 6 }}
+{{- end }}

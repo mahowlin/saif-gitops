@@ -1,0 +1,113 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+# ClusterRole for NFD Operator
+# Extracted from nfd.4.19.0-202601120612 CSV
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: nfd-manager
+  annotations:
+    argocd.argoproj.io/sync-wave: "-4"
+rules:
+  # Core resources
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create, update, watch]
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [create, delete, get, list, patch, update, watch]
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [create, delete, get, list, patch, update, watch]
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get, list, patch, update, watch]
+  - apiGroups: [""]
+    resources: [nodes/status]
+    verbs: [get, list, patch, update]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [create, delete, get, list, patch, update, watch]
+  - apiGroups: [""]
+    resources: [serviceaccounts]
+    verbs: [create, delete, get, list, patch, update, watch]
+  - apiGroups: [""]
+    resources: [services]
+    verbs: [create, delete, get, list, patch, update, watch]
+  # Apps
+  - apiGroups: [apps]
+    resources: [daemonsets]
+    verbs: [create, delete, get, list, patch, update, watch]
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [create, delete, get, list, patch, update, watch]
+  # Batch
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [create, delete, get, list, patch, update, watch]
+  # Coordination
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [create, delete, get, list, update, watch]
+  # Cert-manager (optional)
+  - apiGroups: [cert-manager.io]
+    resources: [certificates, issuers]
+    verbs: [get, list, watch]
+  # NFD CRDs (OpenShift)
+  - apiGroups: [nfd.openshift.io]
+    resources: [nodefeaturediscoveries]
+    verbs: [create, delete, get, list, patch, update, watch]
+  - apiGroups: [nfd.openshift.io]
+    resources: [nodefeaturediscoveries/finalizers]
+    verbs: [update]
+  - apiGroups: [nfd.openshift.io]
+    resources: [nodefeaturediscoveries/status]
+    verbs: [get, patch, update]
+  - apiGroups: [nfd.openshift.io]
+    resources: [nodefeaturerules]
+    verbs: [get, list, watch]
+  - apiGroups: [nfd.openshift.io]
+    resources: [nodefeaturerules/finalizers]
+    verbs: [update]
+  - apiGroups: [nfd.openshift.io]
+    resources: [nodefeatures]
+    verbs: [get, list, watch]
+  # NFD CRDs (k8s-sigs)
+  - apiGroups: [nfd.k8s-sigs.io]
+    resources: [nodefeaturerules]
+    verbs: [get, list, watch, create, delete, update, patch]
+  # RBAC
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [clusterrolebindings]
+    verbs: [create, delete, get, list, patch, update, watch]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [clusterroles]
+    verbs: [create, delete, get, list, patch, update, watch]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [rolebindings]
+    verbs: [create, delete, get, list, patch, update, watch]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [roles]
+    verbs: [create, delete, get, list, patch, update, watch]
+  # Security
+  - apiGroups: [security.openshift.io]
+    resources: [securitycontextconstraints]
+    verbs: [create, delete, get, list, patch, update, use, watch]
+  # Topology
+  - apiGroups: [topology.node.k8s.io]
+    resources: [noderesourcetopologies]
+    verbs: [create, get, update]
+  # Auth
+  - apiGroups: [authentication.k8s.io]
+    resources: [tokenreviews]
+    verbs: [create]
+  - apiGroups: [authorization.k8s.io]
+    resources: [subjectaccessreviews]
+    verbs: [create]
+  # Policy
+  - apiGroups: [policy]
+    resources: [podsecuritypolicies]
+    resourceNames: [nfd-worker]
+    verbs: [use]

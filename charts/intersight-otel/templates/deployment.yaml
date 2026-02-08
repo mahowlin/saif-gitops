@@ -1,0 +1,100 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+# Intersight OTEL Collector Deployment
+# Two containers: intersight-otel (polls Intersight) + otel-collector (exports to Splunk)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: intersight-otel
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: intersight-otel
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: intersight-otel
+  template:
+    metadata:
+      labels:
+        app: intersight-otel
+      annotations:
+        # Trigger restart when ConfigMaps change
+        checksum/config-intersight: {{ include (print $.Template.BasePath "/configmap-intersight-otel.yaml") . | sha256sum }}
+        checksum/config-otel: {{ include (print $.Template.BasePath "/configmap-otel-collector.yaml") . | sha256sum }}
+    spec:
+      containers:
+        # Intersight OTEL - polls Intersight API for UCS metrics
+        - name: intersight-otel
+          image: {{ .Values.image.intersightOtel.repository }}:{{ .Values.image.intersightOtel.tag }}
+          command:
+            - "/target/release/intersight_otel"
+            - "-c"
+            - "/etc/intersight-otel/intersight-otel.toml"
+          env:
+            - name: RUST_LOG
+              value: "info"
+            - name: intersight_otel_key_file
+              value: /etc/intersight-otel-key/intersight.pem
+            - name: intersight_otel_key_id
+              valueFrom:
+                secretKeyRef:
+                  name: intersight-api-credentials
+                  key: intersight-key-id
+          resources:
+            requests:
+              cpu: {{ .Values.resources.intersightOtel.requests.cpu }}
+              memory: {{ .Values.resources.intersightOtel.requests.memory }}
+            limits:
+              cpu: {{ .Values.resources.intersightOtel.limits.cpu }}
+              memory: {{ .Values.resources.intersightOtel.limits.memory }}
+          volumeMounts:
+            - name: intersight-otel-config
+              mountPath: /etc/intersight-otel
+              readOnly: true
+            - name: intersight-otel-key
+              mountPath: /etc/intersight-otel-key
+              readOnly: true
+        # OpenTelemetry Collector - receives from intersight-otel, exports to Splunk
+        - name: otel-collector
+          image: {{ .Values.image.otelCollector.repository }}:{{ .Values.image.otelCollector.tag }}
+          command:
+            - "/otelcol-contrib"
+            - "--config=/conf/otel-collector-config.yaml"
+          env:
+            - name: SPLUNK_ACCESS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: splunk-credentials
+                  key: access-token
+          resources:
+            requests:
+              cpu: {{ .Values.resources.otelCollector.requests.cpu }}
+              memory: {{ .Values.resources.otelCollector.requests.memory }}
+            limits:
+              cpu: {{ .Values.resources.otelCollector.limits.cpu }}
+              memory: {{ .Values.resources.otelCollector.limits.memory }}
+          ports:
+            - containerPort: 4317
+              name: otlp-grpc
+            - containerPort: 4318
+              name: otlp-http
+          volumeMounts:
+            - name: otel-collector-config
+              mountPath: /conf
+              readOnly: true
+      volumes:
+        - name: intersight-otel-config
+          configMap:
+            name: intersight-otel-config
+        - name: intersight-otel-key
+          secret:
+            secretName: intersight-api-credentials
+            items:
+              - key: intersight-key
+                path: intersight.pem
+        - name: otel-collector-config
+          configMap:
+            name: otel-collector-config

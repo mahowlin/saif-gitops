@@ -1,0 +1,26 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+# Platform CatalogSources - Red Hat and Certified operator catalogs
+# Sync-wave -5: after IDMS (-10), before operators (0)
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-catalogsources
+  namespace: openshift-gitops
+  annotations:
+    argocd.argoproj.io/sync-wave: "-5"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/mahowlin/saif-gitops.git
+    targetRevision: main
+    path: apps/platform-catalogsources
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: openshift-marketplace
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true

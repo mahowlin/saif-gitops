@@ -1,0 +1,32 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+# Platform IDMS - Image mirrors for disconnected cluster
+# Pulls from OCI registry (published by sync-images workflow in saif-sys-admin)
+# Sync-wave -10 ensures IDMS is applied before CatalogSources and operators
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-idms
+  namespace: openshift-gitops
+  annotations:
+    argocd.argoproj.io/sync-wave: "-10"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    # OCI Helm chart from internal registry
+    # repoURL = registry host only (no oci:// prefix)
+    # chart = full path to chart in registry
+    repoURL: registry.example.com:5000
+    chart: charts/platform-idms
+    # Version format: 1.0.0-ocp4.19.<commit>
+    targetRevision: "1.0.0-ocp4.19.b728e7b"
+  destination:
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

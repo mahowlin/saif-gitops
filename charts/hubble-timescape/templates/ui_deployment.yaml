@@ -1,0 +1,46 @@
+{{- if and (not .Values.lite.enabled) .Values.ui.enabled -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "hubble-timescape-ui.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hubble-timescape-ui.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.ui.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "hubble-timescape-ui.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with include "hubble-timescape-ui.podAnnotations" . }}
+      annotations:
+        {{- . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "hubble-timescape-ui.podLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ .Values.ui.serviceAccount.name | quote }}
+      {{- $imagePullSecrets := .Values.ui.image.pullSecrets }}
+      {{- with $imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.ui.podSecurityContext | nindent 8 }}
+      priorityClassName: {{ .Values.ui.priorityClassName }}
+      containers: {{- include "hubble-timescape-ui.containers" . | nindent 8 }}
+      {{- with .Values.ui.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.ui.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.ui.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes: {{- include "hubble-timescape-ui.volumes" . | nindent 6 }}
+{{- end }}

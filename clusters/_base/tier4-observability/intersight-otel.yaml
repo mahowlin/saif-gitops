@@ -1,0 +1,34 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+# Intersight OTEL Collector - UCS Metrics for Splunk Dashboard
+# Cluster-specific clusterName set via Kustomize patches
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: intersight-otel
+  namespace: openshift-gitops
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/mahowlin/saif-gitops.git
+    targetRevision: main
+    path: charts/intersight-otel
+    helm:
+      # Cluster-specific parameters added via Kustomize patches
+      # Image versions controlled in charts/intersight-otel/values.yaml
+      parameters: []
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: intersight-otel
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

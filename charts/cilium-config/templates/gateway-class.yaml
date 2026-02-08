@@ -1,0 +1,14 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+{{- if .Values.gatewayAPI.enabled }}
+# GatewayClass for Cilium Gateway API
+# Enables Gateway and HTTPRoute resources for ingress routing
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: {{ .Values.gatewayAPI.gatewayClassName | default "cilium" }}
+spec:
+  controllerName: io.cilium/gateway-controller
+{{- end }}

@@ -1,0 +1,21 @@
+{{- if and .Values.lite.enabled .Values.lite.clickhouse.enabled .Values.lite.clickhouse.volumes.data }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: data-storage-template-chi-hubble-timescape-hubble-data-0-0-0
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    # Keep PVC to prevent accidental data loss and allow upgrade to standalone clickhouse
+    helm.sh/resource-policy: keep
+  labels:
+    {{- include "hubble-timescape-lite.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.lite.clickhouse.volumes.data.size }}
+  {{- with .Values.lite.clickhouse.volumes.data.storageClassName }}
+  storageClassName: {{ . }}
+  {{- end }}
+{{- end }}

@@ -1,0 +1,15 @@
+tls:
+  enabled: true
+  auto:
+    enabled: true
+    method: certmanager
+    certmanager:
+      issuerRef:
+        group: cert-manager.io
+        kind: ClusterIssuer
+        name: selfsigned-ca-issuer
+
+clickhouse:
+  client:
+    dsn:
+      host: "clickhouse.example.com"

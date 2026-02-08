@@ -1,0 +1,17 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - namespace.yaml
+  - scc-nonroot-v2.yaml
+  - model-pvc.yaml
+  - training-job.yaml
+  - inference-deployment.yaml
+  - inference-service.yaml
+  - webapp-deployment.yaml
+  - webapp-service.yaml
+  - mnist-dns-visibility.yaml

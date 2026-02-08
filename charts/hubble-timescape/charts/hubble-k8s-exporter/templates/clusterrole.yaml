@@ -1,0 +1,74 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "hubble-k8s-exporter.fullname" . }}
+  labels:
+    {{- include "hubble-k8s-exporter.labels" . | nindent 4 }}
+rules:
+{{- if .Values.export.k8sNetworkPolicies }}
+- apiGroups:
+  - networking.k8s.io
+  resources:
+  - networkpolicies
+  verbs:
+  - get
+  - list
+  - watch
+{{- end }}
+{{- if .Values.export.k8sEndpoints }}
+- apiGroups:
+  - ""
+  resources:
+  - endpoints
+  verbs:
+  - get
+  - list
+  - watch
+{{- end }}
+
+{{- $ciliumioResources := list }}
+{{- if .Values.export.ciliumNetworkPolicies }}
+{{- $ciliumioResources = mustAppend $ciliumioResources "ciliumnetworkpolicies" }}
+{{- $ciliumioResources = mustAppend $ciliumioResources "ciliumclusterwidenetworkpolicies" }}
+{{- end }}
+{{- if .Values.export.ciliumEndpoints }}
+{{- $ciliumioResources = mustAppend $ciliumioResources "ciliumendpoints" }}
+{{- end }}
+{{- if .Values.export.ciliumIdentities }}
+{{- $ciliumioResources = mustAppend $ciliumioResources "ciliumidentities" }}
+{{- end }}
+{{- if .Values.export.tetragonNetworkPolicies }}
+{{- $ciliumioResources = mustAppend $ciliumioResources "tetragonnetworkpolicies" }}
+{{- $ciliumioResources = mustAppend $ciliumioResources "tetragonnetworkpoliciesnamespaced" }}
+{{- end }}
+{{- if .Values.export.ciliumNodes }}
+{{- $ciliumioResources = mustAppend $ciliumioResources "ciliumnodes" }}
+{{- end }}
+{{- if gt (len $ciliumioResources) 0 }}
+- apiGroups:
+  - cilium.io
+  resources: {{- $ciliumioResources | toYaml | nindent 2 }}
+  verbs:
+  - get
+  - list
+  - watch
+{{- end }}
+{{- $isovalentResources := list }}
+{{- if .Values.export.tetragonNodes }}
+{{- $isovalentResources = mustAppend $isovalentResources "tetragonnodes" }}
+{{- end }}
+{{- if .Values.export.smartSwitches }}
+{{- $isovalentResources = mustAppend $isovalentResources "smartswitches" }}
+{{- end }}
+{{- if .Values.export.smartSwitchNetworkPolicies }}
+{{- $isovalentResources = mustAppend $isovalentResources "smartswitchnetworkpolicies" }}
+{{- end }}
+{{- if gt (len $isovalentResources) 0 }}
+- apiGroups:
+  - isovalent.com
+  resources: {{- $isovalentResources | toYaml | nindent 2 }}
+  verbs:
+  - get
+  - list
+  - watch
+{{- end }}

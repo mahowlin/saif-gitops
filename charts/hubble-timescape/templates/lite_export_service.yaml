@@ -1,0 +1,24 @@
+{{- if or (eq (include "hubble-timescape-ingester.server.http.enabled" .) "true") (eq (include "hubble-timescape-ingester.server.grpc.enabled" .) "true") }}
+{{- $labels := ternary "hubble-timescape-ingester.labels" "hubble-timescape-lite.labels" (or (eq (include "hubble-timescape-ingester.server.http.enabled" .) "true") (eq (include "hubble-timescape-ingester.server.grpc.enabled" .) "true")) }}
+{{- $selector := ternary "hubble-timescape-ingester.selectorLabels" "hubble-timescape-lite.selectorLabels" (or (eq (include "hubble-timescape-ingester.server.http.enabled" .) "true") (eq (include "hubble-timescape-ingester.server.grpc.enabled" .) "true")) }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Chart.Name }}-export
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include $labels . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - protocol: TCP
+      name: push
+      targetPort: push
+      port: 4260
+    - protocol: TCP
+      name: stream
+      targetPort: stream
+      port: 4261
+  selector:
+    {{- include $selector . | nindent 4 }}
+{{- end }}

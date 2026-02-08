@@ -1,0 +1,21 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+# OpenShift Route for external API access
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: llama31-70b
+  namespace: nim-llm
+spec:
+  port:
+    targetPort: 8000
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+  to:
+    kind: Service
+    name: llama31-70b-instruct
+    weight: 100
+  wildcardPolicy: None

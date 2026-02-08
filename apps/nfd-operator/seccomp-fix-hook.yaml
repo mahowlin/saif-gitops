@@ -1,0 +1,88 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+# ArgoCD PostSync hook: fix NFD OLM seccomp annotation bug
+#
+# Problem: OLM's NFD CSV creates a deployment with container-level seccompProfile
+# but no pod-level seccomp. On K8s 1.32, the SCC admission controller injects the
+# deprecated annotation seccomp.security.alpha.kubernetes.io/pod which is rejected.
+#
+# Fix: Add pod-level seccompProfile.type=RuntimeDefault to the deployment, which
+# prevents the SCC from injecting the alpha annotation.
+#
+# This hook runs after ArgoCD syncs the Subscription. It polls for the OLM-created
+# deployment and patches it. OLM stops reconciling the deployment once the CSV
+# reaches Succeeded, so the patch persists.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: nfd-seccomp-fix
+  namespace: openshift-nfd
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 5
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        app: nfd-seccomp-fix
+    spec:
+      serviceAccountName: nfd-seccomp-patcher
+      restartPolicy: Never
+      containers:
+        - name: patch
+          image: registry.example.com:5000/openshift4/ose-tools-rhel9:latest
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+
+              echo "NFD seccomp fix: waiting for OLM to create nfd-controller-manager deployment..."
+
+              # Poll for deployment (OLM creates it async after Subscription)
+              ATTEMPTS=0
+              MAX_ATTEMPTS=60
+              while [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; do
+                if oc get deployment nfd-controller-manager -n openshift-nfd >/dev/null 2>&1; then
+                  echo "Deployment found."
+                  break
+                fi
+                ATTEMPTS=$((ATTEMPTS + 1))
+                echo "  Waiting... ($ATTEMPTS/$MAX_ATTEMPTS)"
+                sleep 10
+              done
+
+              if [ $ATTEMPTS -eq $MAX_ATTEMPTS ]; then
+                echo "ERROR: Timed out waiting for nfd-controller-manager deployment"
+                exit 1
+              fi
+
+              # Check if pod-level seccomp already set
+              CURRENT=$(oc get deployment nfd-controller-manager -n openshift-nfd \
+                -o jsonpath='{.spec.template.spec.securityContext.seccompProfile.type}' 2>/dev/null || true)
+
+              if [ "$CURRENT" = "RuntimeDefault" ]; then
+                echo "Pod-level seccompProfile already set. No patch needed."
+                exit 0
+              fi
+
+              # Apply patch
+              echo "Patching deployment with pod-level seccompProfile..."
+              oc patch deployment nfd-controller-manager -n openshift-nfd \
+                --type=json \
+                -p='[{"op":"add","path":"/spec/template/spec/securityContext/seccompProfile","value":{"type":"RuntimeDefault"}}]'
+
+              echo "Waiting for rollout..."
+              oc rollout status deployment/nfd-controller-manager -n openshift-nfd --timeout=120s
+
+              echo "NFD seccomp fix applied successfully."
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi

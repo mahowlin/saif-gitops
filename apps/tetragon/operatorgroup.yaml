@@ -1,0 +1,15 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+# OperatorGroup for Tetragon operator
+# Follows CLIFE pattern - empty spec watches all namespaces
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: tetragon
+  namespace: tetragon
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  upgradeStrategy: Default

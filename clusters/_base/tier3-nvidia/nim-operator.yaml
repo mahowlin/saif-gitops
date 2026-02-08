@@ -1,0 +1,43 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+# NVIDIA NIM Operator - Helm-based deployment
+# Provides NIMCache and NIMService CRDs for deploying NIM models
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: nim-operator
+  namespace: openshift-gitops
+  annotations:
+    # Deploy operator before NIM LLM app
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/mahowlin/saif-gitops.git
+    targetRevision: main
+    path: charts/k8s-nim-operator
+    helm:
+      values: |
+        # Override image to use local mirrored registry
+        operator:
+          image:
+            repository: registry.example.com:5000/nvidia/cloud-native/k8s-nim-operator
+            tag: v3.0.2
+            pullPolicy: IfNotPresent
+          # Disable admission controller (requires cert-manager)
+          admissionController:
+            enabled: false
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: nim-operator
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

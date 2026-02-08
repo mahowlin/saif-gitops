@@ -1,0 +1,51 @@
+{{- $prometheusConfig := .Values.clickhouse.cluster.prometheus }}
+{{- if .Values.lite.enabled }}
+{{- $prometheusConfig := .Values.lite.clickhouse.prometheus }}
+{{- end }}
+{{- if or (and .Values.clickhouse.cluster.enabled .Values.clickhouse.cluster.prometheus.prometheusRule.enabled) (and .Values.lite.enabled .Values.lite.clickhouse.enabled .Values.lite.clickhouse.prometheus.enabled .Values.lite.clickhouse.prometheus.prometheusRule.enabled ) }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: hubble-timescape-clickhouse
+  namespace: {{ $prometheusConfig.prometheusRule.namespace | default .Release.Namespace }}
+  labels:
+    {{- if (and .Values.lite.enabled .Values.lite.clickhouse.enabled) }}
+    {{- include "hubble-timescape-lite.selectorLabels" . | nindent 6 }}
+    {{- else }}
+    {{- include "hubble-timescape-clickhouse.labels" . | nindent 6 }}
+    {{- end }}
+    {{- with $prometheusConfig.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  annotations:
+    {{- with $prometheusConfig.prometheusRule.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: HubbleTimescapeClickhouse
+      rules:
+      {{- if $prometheusConfig.prometheusRule.rules.TimescapeClickhouseVolumeFillingUp.enabled }}
+        - alert: 'TimescapeClickhouseVolumeFillingUp'
+          # Alert when <50% space left on device and it is predicted to exceed the configured threshold
+          # The Alert does not fire if there is more than 50% space left to reduce false positives for newly created instances
+          expr: |
+            kubelet_volume_stats_available_bytes{namespace="{{ .Release.Namespace }}",persistentvolumeclaim="data-storage-template-chi-hubble-timescape-hubble-data-0-0-0"}
+            /
+            kubelet_volume_stats_capacity_bytes{namespace="{{ .Release.Namespace }}",persistentvolumeclaim="data-storage-template-chi-hubble-timescape-hubble-data-0-0-0"}
+            < 0.5
+            and
+            predict_linear(kubelet_volume_stats_available_bytes{namespace="{{ .Release.Namespace }}",persistentvolumeclaim="data-storage-template-chi-hubble-timescape-hubble-data-0-0-0"}[24h], {{ $prometheusConfig.prometheusRule.rules.TimescapeClickhouseVolumeFillingUp.predictionTime | include "durationSeconds" }})
+            /
+            kubelet_volume_stats_capacity_bytes{namespace="{{ .Release.Namespace }}",persistentvolumeclaim="data-storage-template-chi-hubble-timescape-hubble-data-0-0-0"}
+            < {{ $prometheusConfig.prometheusRule.rules.TimescapeClickhouseVolumeFillingUp.threshold }}
+          labels:
+            severity: warning
+          annotations:
+            summary: 'Hubble Timescape ClickHouse Volume is filling up'
+            description:  |
+                Based on recent sampling, the Hubble Timescape ClickHouse volume is expected to have less than {{`{{`}} {{ $prometheusConfig.prometheusRule.rules.TimescapeClickhouseVolumeFillingUp.threshold  }} | humanizePercentage {{`}}`}} space available within {{ $prometheusConfig.prometheusRule.rules.TimescapeClickhouseVolumeFillingUp.predictionTime }}.
+                Currently {{`{{`}} $value | humanizePercentage {{`}}`}} is available. Either reduce the number of exported events or increase the ClickHouse volume size to avoid ingestion issues.
+            runbook_url: "https://docs.isovalent.com/operations-guide/hubble/hubble-timescape/monitoring/runbooks/clickhouse.html#timescapeclickhousevolumefillingup"
+      {{- end }}
+{{- end }}

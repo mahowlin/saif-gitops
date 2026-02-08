@@ -1,0 +1,50 @@
+{{- if .Values.lite.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "hubble-timescape-lite.name" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hubble-timescape-lite.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    log-level: {{ .Values.lite.logLevel | default .Values.logLevel }}
+    {{- if .Values.lite.prometheus.enabled }}
+    prometheus-serve-addr: ":{{ .Values.lite.prometheus.port }}"
+    {{- end }}
+    pprof: {{ .Values.lite.pprof.enabled }}
+    pprof-address: {{ .Values.lite.pprof.address | quote }}
+    pprof-port: {{ .Values.lite.pprof.port | quote }}
+    gops: {{ .Values.lite.gops.enabled }}
+    gops-port: {{ .Values.lite.gops.port | quote }}
+    {{- $clickhouse := merge dict .Values.lite.clickhouse .Values.clickhouse }}
+    {{- if (include "hubble-timescape.clickhouse-has-custom-ca" $clickhouse) }}
+    tls-clickhouse-ca-files: "/var/lib/hubble-timescape/clickhouse-certs/clickhouse-ca.crt"
+    {{- end }}
+    connection-logs-ttl: {{ include "hubble-timescape.connection-logs.ttl" . }}
+    connection-logs-hourly-rollup-age: {{ include "hubble-timescape.connection-logs.hourlyRollupAge" . }}
+    connection-logs-daily-rollup-age: {{ include "hubble-timescape.connection-logs.dailyRollupAge" . }}
+    flows-ttl: {{ include "hubble-timescape.flows.ttl" . }}
+    k8s-ttl: {{ include "hubble-timescape.k8s.ttl" . }}
+    assessment-reports-ttl: {{ include "hubble-timescape.assessment-reports.ttl" . }}
+    system-status-ttl: {{ include "hubble-timescape.system-status.ttl" . }}
+    clickhouse-storage-mode: {{ .Values.clickhouse.settings.storage.policy | quote }}
+    enable-clickhouse-server-logs: {{ $clickhouse.client.serverLogs.log | quote }}
+    log-query-progress: {{ $clickhouse.client.progress.log | quote }}
+    enable-analyzer: {{ .Values.analyzer.enabled }}
+    health-listen-address: ":{{ .Values.lite.healthCheckPort }}"
+    enable-ui: {{ .Values.ui.enabled }}
+    {{- include "hubble-timescape-tracing.config" .Values.lite | nindent 4 }}
+    server:
+      {{- include "hubble-timescape-server.config" . | nindent 6 }}
+    ingester:
+      {{- include "hubble-timescape-ingester.config" . | nindent 6 }}
+    trimmer:
+      flows-count: {{ .Values.trimmer.flowsCount }}
+      timeout: {{ .Values.trimmer.timeout | default (printf "%.fm" .Values.trimmer.trimIntervalMinutes) }}
+    analyzer:
+      {{- include "hubble-timescape-analyzer.config" . | nindent 6 }}
+    ui:
+      {{- include "hubble-timescape-ui.config" . | nindent 6 }}
+{{- end }}

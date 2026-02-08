@@ -1,0 +1,21 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+# Subscription for NVIDIA GPU Operator
+# Uses certified-operators-local catalog (mirrored from Red Hat)
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: gpu-operator-certified
+  namespace: nvidia-gpu-operator
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  labels:
+    operators.coreos.com/gpu-operator-certified.nvidia-gpu-operator: ""
+spec:
+  name: gpu-operator-certified
+  channel: v25.10
+  source: certified-operators-local
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Automatic

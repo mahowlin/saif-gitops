@@ -1,0 +1,100 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "k8s-nim-operator.fullname" . }}
+  labels:
+    app.kubernetes.io/component: manager
+    app.kubernetes.io/created-by: k8s-nim-operator
+    app.kubernetes.io/part-of: k8s-nim-operator
+    control-plane: controller-manager
+    {{- include "k8s-nim-operator.labels" . | nindent 4 }}
+  annotations:
+    {{- toYaml .Values.operator.annotations | nindent 4 }}
+spec:
+  replicas: {{ .Values.operator.replicas }}
+  selector:
+    matchLabels:
+      control-plane: controller-manager
+    {{- include "k8s-nim-operator.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        control-plane: controller-manager
+      {{- include "k8s-nim-operator.selectorLabels" . | nindent 8 }}
+      annotations:
+        kubectl.kubernetes.io/default-container: manager
+        {{- with .Values.operator.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      containers:
+      - args:
+        {{- include "k8s-nim-operator.fullArgs" . | nindent 8 }}
+        command:
+        - /manager
+        image: {{ include "k8s-nim-operator.fullimage" . }}
+        imagePullPolicy: {{ .Values.operator.image.pullPolicy }}
+        {{- if .Values.operator.admissionController.enabled }}
+        ports:
+          - containerPort: 9443
+            name: webhook-server
+            protocol: TCP
+        volumeMounts:
+          - mountPath: /tmp/k8s-webhook-server/serving-certs
+            name: cert
+            readOnly: true
+        {{- end }}
+        env:
+          - name: WATCH_NAMESPACE
+            value: ""
+          - name: OPERATOR_NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: ENABLE_WEBHOOKS
+            value: "{{ .Values.operator.admissionController.enabled }}"
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8081
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        name: manager
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8081
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources: {{- toYaml .Values.operator.resources | nindent 10 }}
+        securityContext: {{- toYaml .Values.operator.containerSecurityContext | nindent 10 }}
+      imagePullSecrets:
+      {{- range .Values.operator.image.pullSecrets }}
+        - name: {{ . }}
+      {{- end }}
+      securityContext: {{- toYaml .Values.operator.podSecurityContext | nindent 8 }}
+      serviceAccountName: k8s-nim-operator
+      terminationGracePeriodSeconds: 10
+      {{- if .Values.operator.admissionController.enabled }}
+      volumes:
+        - name: cert
+          secret:
+            {{- if eq .Values.operator.admissionController.tls.mode "cert-manager" }}
+            secretName: {{ include "k8s-nim-operator.fullname" . }}-webhook-server-cert
+            {{- else }}
+            secretName: {{ required "operator.admissionController.tls.secret.name is required when tls.mode is 'secret'" .Values.operator.admissionController.tls.secret.name }}
+            {{- end }}
+            defaultMode: 420
+      {{- end }}
+    {{- with .Values.operator.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+    {{- with .Values.operator.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+    {{- with .Values.operator.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}

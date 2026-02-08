@@ -1,0 +1,164 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+# Splunk OTel Collector - Metrics to Splunk Observability Cloud
+# Scrapes: DCGM (GPU), NIM (LLM inference), Tetragon, Cilium Agent metrics
+# Cluster-specific values set via helm.parameters in cluster kustomization.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: splunk-otel
+  namespace: openshift-gitops
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/mahowlin/saif-gitops.git
+    targetRevision: main
+    path: charts/splunk-otel-collector
+    helm:
+      # Cluster-specific parameters added via Kustomize patches:
+      # - clusterName
+      parameters: []
+      values: |
+        # Cluster identification - SET VIA helm.parameters
+        # clusterName: "SET VIA helm.parameters"
+
+        # OpenShift distribution
+        distribution: "openshift"
+
+        # Splunk Observability Cloud configuration
+        splunkObservability:
+          realm: "us1"
+          accessToken: ""  # Injected via secret
+          metricsEnabled: true
+          tracesEnabled: false
+
+        # Use existing secret for access token (injected via GitHub Actions)
+        secret:
+          create: false
+          name: "splunk-otel-secret"
+          validateSecret: false  # Disable hook - uses external image
+
+        # Image configuration - use local registry
+        image:
+          otelcol:
+            repository: registry.example.com:5000/signalfx/splunk-otel-collector
+            tag: "0.143.0"
+
+        # Disable logs collection (only need metrics)
+        logsCollection:
+          containers:
+            enabled: false
+
+        # Disable operator (not needed for basic metrics)
+        operator:
+          enabled: false
+        certmanager:
+          enabled: false
+
+        # Agent configuration (DaemonSet) - collect OS-level metrics from nodes
+        agent:
+          enabled: true
+          resources:
+            limits:
+              cpu: 500m
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 256Mi
+
+        # Cluster receiver for scraping service endpoints
+        clusterReceiver:
+          enabled: true
+          resources:
+            limits:
+              cpu: 500m
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 256Mi
+
+          # Custom OTel config to add prometheus scrape targets
+          config:
+            receivers:
+              prometheus/dcgm:
+                config:
+                  scrape_configs:
+                    - job_name: 'dcgm'
+                      scrape_interval: 15s
+                      static_configs:
+                        - targets: ['nvidia-dcgm-exporter.nvidia-gpu-operator.svc:9400']
+                      metric_relabel_configs:
+                        - source_labels: [__name__]
+                          regex: 'DCGM_FI_.*'
+                          action: keep
+              prometheus/cilium:
+                config:
+                  scrape_configs:
+                    - job_name: 'cilium-agent'
+                      scrape_interval: 15s
+                      static_configs:
+                        - targets: ['cilium-agent.cilium.svc:9962']
+                      metric_relabel_configs:
+                        - source_labels: [__name__]
+                          regex: 'cilium_.*'
+                          action: keep
+              prometheus/tetragon:
+                config:
+                  scrape_configs:
+                    - job_name: 'tetragon'
+                      scrape_interval: 15s
+                      static_configs:
+                        - targets: ['tetragon-metrics.tetragon.svc:2112']
+                      metric_relabel_configs:
+                        - source_labels: [__name__]
+                          regex: 'tetragon_.*'
+                          action: keep
+              prometheus/hubble:
+                config:
+                  scrape_configs:
+                    - job_name: 'hubble'
+                      scrape_interval: 15s
+                      static_configs:
+                        - targets: ['hubble-metrics.cilium.svc:9965']
+                      metric_relabel_configs:
+                        - source_labels: [__name__]
+                          regex: 'hubble_.*'
+                          action: keep
+              prometheus/nim:
+                config:
+                  scrape_configs:
+                    - job_name: 'nim'
+                      scrape_interval: 15s
+                      metrics_path: '/v1/metrics'
+                      static_configs:
+                        - targets: ['nim-llm.nim-llm.svc:8000']
+                      metric_relabel_configs:
+                        - source_labels: [__name__]
+                          regex: '(prompt_tokens_total|generation_tokens_total|time_to_first_token_seconds.*|time_per_output_token_seconds.*|e2e_request_latency_seconds.*|request_success_total|request_failure_total|num_requests_running|num_requests_waiting|gpu_cache_usage_perc|request_prompt_tokens.*|request_generation_tokens.*|num_request_max)'
+                          action: keep
+            service:
+              pipelines:
+                metrics:
+                  receivers:
+                    - k8s_cluster
+                    - prometheus/dcgm
+                    - prometheus/cilium
+                    - prometheus/tetragon
+                    - prometheus/hubble
+                    - prometheus/nim
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: splunk-otel
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

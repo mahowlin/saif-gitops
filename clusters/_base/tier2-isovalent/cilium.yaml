@@ -1,0 +1,86 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+# Cilium Day 2 Configuration
+# Cluster-specific values (clusterName, apiHost, ipPool) set via Kustomize patches
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cilium-config
+  namespace: openshift-gitops
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/mahowlin/saif-gitops.git
+    targetRevision: main
+    path: charts/cilium-config
+    helm:
+      # Cluster-specific parameters added via Kustomize patches
+      parameters: []
+      values: |
+        # CiliumConfig - core operator settings
+        ciliumConfig:
+          enabled: true
+          ipam:
+            cidr: "10.253.0.0/16"
+            hostPrefix: 24
+
+        # L2 Announcements enabled for all clusters
+        l2:
+          enabled: true
+
+        # IP Pool enabled (start/stop set per-cluster)
+        ipPool:
+          enabled: true
+
+        # Gateway API enabled
+        gatewayAPI:
+          enabled: true
+
+        # Cluster-wide DNS visibility for all pods
+        clusterPolicy:
+          enabled: true
+          policies:
+            - name: cluster-dns-visibility
+              description: "Enable DNS visibility for all pods cluster-wide"
+              specs:
+                endpointSelector: {}
+                enableDefaultDeny:
+                  egress: false
+                  ingress: false
+                egress:
+                  - toEndpoints:
+                      - matchExpressions:
+                          - key: io.kubernetes.pod.namespace
+                            operator: In
+                            values:
+                              - openshift-dns
+                        matchLabels:
+                          dns.operator.openshift.io/daemonset-dns: default
+                    toPorts:
+                      - ports:
+                          - port: "53"
+                            protocol: UDP
+                          - port: "53"
+                            protocol: TCP
+                          - port: "5353"
+                            protocol: UDP
+                          - port: "5353"
+                            protocol: TCP
+                        rules:
+                          dns:
+                            - matchPattern: '*'
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cilium
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false

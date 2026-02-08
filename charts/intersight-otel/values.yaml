@@ -1,0 +1,46 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+# Intersight OTEL Collector - Default Values
+
+# clusterName -- Cluster name for metrics attribution (REQUIRED)
+# Used in k8s.cluster.name and intersight.cluster attributes
+clusterName: ""
+
+# bladeSerial -- UCS Blade serial number for this cluster (REQUIRED)
+# Used to filter Intersight queries to the correct blade
+# Find serials in saif-ai-pod/openshift/cluster-mappings.yaml
+bladeSerial: ""
+
+# image settings
+image:
+  intersightOtel:
+    repository: registry.example.com:5000/mahowlin/intersight-otel
+    tag: "v0.3.0-numeric-fields"
+  otelCollector:
+    repository: registry.example.com:5000/otel/opentelemetry-collector-contrib
+    tag: "0.127.0"
+
+# Splunk configuration
+splunk:
+  realm: us1
+  apiUrl: https://api.us1.signalfx.com
+  ingestUrl: https://ingest.us1.signalfx.com
+
+# Resource limits
+resources:
+  intersightOtel:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  otelCollector:
+    limits:
+      cpu: 200m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 256Mi

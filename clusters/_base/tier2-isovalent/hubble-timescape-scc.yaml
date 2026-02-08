@@ -1,0 +1,29 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+# Hubble Timescape SCC Configuration - Deploy before main components
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: hubble-timescape-scc
+  namespace: openshift-gitops
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/mahowlin/saif-gitops.git
+    targetRevision: main
+    path: apps/hubble-timescape-scc
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: hubble-timescape
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

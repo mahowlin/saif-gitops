@@ -1,0 +1,23 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+{{- if .Values.clusterPolicy.enabled }}
+{{- range .Values.clusterPolicy.policies }}
+---
+# CiliumClusterwideNetworkPolicy - {{ .name }}
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: {{ .name }}
+  labels:
+    app.kubernetes.io/managed-by: {{ $.Release.Service }}
+    app.kubernetes.io/instance: {{ $.Release.Name }}
+  {{- if .description }}
+  annotations:
+    description: {{ .description | quote }}
+  {{- end }}
+spec:
+  {{- toYaml .specs | nindent 2 }}
+{{- end }}
+{{- end }}

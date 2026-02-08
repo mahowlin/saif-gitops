@@ -1,0 +1,628 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+name: 'Test Workloads'
+run-name: "Workload Test ${{ inputs.cluster_name }}${{ inputs.request_id && format(' [rid={0}]', inputs.request_id) || '' }}"
+
+# Tests ArgoCD-managed workload health after GitOps convergence.
+#
+# This workflow is called AFTER the OCP infrastructure test
+# (saif-ai-pod/openshift-test.yaml) confirms the cluster is healthy.
+#
+# Test phases:
+#   1. Wait for ArgoCD convergence (all apps Synced, no Degraded)
+#   2. Wait for critical workloads (model download, GPU drivers)
+#   3. Validate pod health across all namespaces
+#   4. Validate storage (PVCs bound)
+#   5. Validate sealed secrets decrypted
+
+on:
+  workflow_dispatch:
+    inputs:
+      cluster_name:
+        description: 'Cluster name (ai-pod-1, ai-pod-2, etc.)'
+        required: true
+        type: choice
+        options:
+          - ai-pod-1
+          - ai-pod-2
+          - ai-pod-3
+          - ai-pod-4
+      convergence_timeout:
+        description: 'ArgoCD convergence timeout in seconds'
+        required: false
+        type: number
+        default: 1800
+      request_id:
+        description: 'Orchestrator correlation ID (for run tracking)'
+        required: false
+        type: string
+        default: ''
+  workflow_call:
+    inputs:
+      cluster_name:
+        type: string
+        required: true
+      convergence_timeout:
+        type: number
+        required: false
+        default: 1800
+      request_id:
+        type: string
+        required: false
+        default: ''
+
+jobs:
+  test:
+    name: 'Test Workloads'
+    runs-on: [self-hosted, linux, saif-github-runner]
+    container:
+      image: ghcr.io/mahowlin/github-actions-container:${{ vars.CONTAINER_TAG }}
+
+    env:
+      CLUSTER: ${{ inputs.cluster_name }}
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup Kubeconfig
+      env:
+        KUBECONFIG_REPO_TOKEN: ${{ secrets.KUBECONFIG_REPO_TOKEN }}
+      run: |
+        echo "## Workload Test: $CLUSTER" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+
+        if [ -z "$KUBECONFIG_REPO_TOKEN" ]; then
+          echo "❌ KUBECONFIG_REPO_TOKEN not configured" >> $GITHUB_STEP_SUMMARY
+          exit 1
+        fi
+
+        KUBECONFIG_DIR="$HOME/.kube"
+        mkdir -p "$KUBECONFIG_DIR"
+
+        git clone --depth 1 \
+          # Configure this URL for your kubeconfig storage repository
+          "https://x-access-token:${KUBECONFIG_REPO_TOKEN}@github.com/mahowlin/saif-kubeconfigs.git" \
+          /tmp/kubeconfigs 2>/dev/null
+
+        KUBECONFIG_FILE="/tmp/kubeconfigs/clusters/${CLUSTER}/kubeconfig"
+
+        if [ ! -f "$KUBECONFIG_FILE" ]; then
+          echo "❌ Kubeconfig not found: clusters/${CLUSTER}/kubeconfig" >> $GITHUB_STEP_SUMMARY
+          rm -rf /tmp/kubeconfigs
+          exit 1
+        fi
+
+        cp "$KUBECONFIG_FILE" "$KUBECONFIG_DIR/config-$CLUSTER"
+        rm -rf /tmp/kubeconfigs
+
+        echo "KUBECONFIG=$KUBECONFIG_DIR/config-$CLUSTER" >> $GITHUB_ENV
+        echo "✅ Connected to cluster" >> $GITHUB_STEP_SUMMARY
+
+    # =========================================================================
+    # Phase 0: Pre-flight Validation (fail fast before 30-min convergence wait)
+    # =========================================================================
+
+    - name: Pre-flight Validation
+      shell: bash
+      run: |
+        echo "## Pre-flight Validation" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        PREFLIGHT_FAILED=0
+
+        # 1. Registry connectivity — can the cluster pull images?
+        REGISTRY="registry.example.com:5000"
+        REGISTRY_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 -k "https://${REGISTRY}/v2/" 2>&1 || echo "000")
+        if [ "$REGISTRY_STATUS" = "200" ] || [ "$REGISTRY_STATUS" = "401" ]; then
+          echo "✅ Registry reachable ($REGISTRY)" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ Registry unreachable: $REGISTRY (HTTP $REGISTRY_STATUS)" >> $GITHUB_STEP_SUMMARY
+          echo "   All image pulls will fail. Check registry VM and network." >> $GITHUB_STEP_SUMMARY
+          PREFLIGHT_FAILED=1
+        fi
+
+        # 2. Webserver connectivity — can model files be downloaded?
+        WS_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "http://10.0.0.10/nim-cache/" 2>&1 || echo "000")
+        if [ "$WS_STATUS" = "200" ] || [ "$WS_STATUS" = "401" ] || [ "$WS_STATUS" = "301" ]; then
+          echo "✅ Webserver reachable (10.0.0.10)" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ Webserver unreachable (HTTP $WS_STATUS)" >> $GITHUB_STEP_SUMMARY
+          echo "   NIM model download will fail. Check file server VM." >> $GITHUB_STEP_SUMMARY
+          PREFLIGHT_FAILED=1
+        fi
+
+        # 3. ArgoCD is running and has apps
+        # Wait up to 5 minutes for ArgoCD to bootstrap (apps appear after post-install)
+        echo "Waiting for ArgoCD applications to appear..."
+        ARGO_WAIT=0
+        ARGO_APPS=0
+        while [ $ARGO_WAIT -lt 300 ]; do
+          ARGO_APPS=$({ oc get applications -n openshift-gitops --no-headers 2>/dev/null || true; } | wc -l | tr -d '[:space:]')
+          ARGO_APPS="${ARGO_APPS:-0}"
+          if [ "$ARGO_APPS" -gt 0 ]; then
+            break
+          fi
+          sleep 15
+          ARGO_WAIT=$((ARGO_WAIT + 15))
+        done
+        if [ "$ARGO_APPS" -gt 0 ]; then
+          echo "✅ ArgoCD operational ($ARGO_APPS applications)" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ ArgoCD not operational (0 applications after 5m)" >> $GITHUB_STEP_SUMMARY
+          echo "   Bootstrap may have failed. Check openshift-gitops namespace." >> $GITHUB_STEP_SUMMARY
+          PREFLIGHT_FAILED=1
+        fi
+
+        # Checks 4-6 are ArgoCD-managed resources that deploy over time.
+        # Report status but don't fail — the convergence loop handles the wait.
+
+        # 4. StorageClass exists (LVMS must be ready for PVCs)
+        SC_EXISTS=$(oc get storageclass lvms-nvme-raid10 --no-headers 2>/dev/null | wc -l | tr -d '[:space:]')
+        if [ "$SC_EXISTS" -gt 0 ]; then
+          echo "✅ StorageClass lvms-nvme-raid10 exists" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "⏳ StorageClass lvms-nvme-raid10 not yet available (LVMS deploying)" >> $GITHUB_STEP_SUMMARY
+        fi
+
+        # 5. Sealed Secrets controller running (must decrypt secrets before apps start)
+        SS_RUNNING=$(oc get pods -n sealed-secrets -l app.kubernetes.io/name=sealed-secrets --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l | tr -d '[:space:]')
+        if [ "$SS_RUNNING" -gt 0 ]; then
+          echo "✅ Sealed Secrets controller running" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "⏳ Sealed Secrets controller not yet running (deploying)" >> $GITHUB_STEP_SUMMARY
+        fi
+
+        # 6. GPU node detected (NFD must have labelled the node)
+        if oc get namespace nvidia-gpu-operator &>/dev/null; then
+          GPU_PRESENT=$(oc get nodes -l feature.node.kubernetes.io/pci-10de.present=true --no-headers 2>/dev/null | wc -l | tr -d '[:space:]')
+          if [ "$GPU_PRESENT" -gt 0 ]; then
+            echo "✅ GPU node detected by NFD" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⏳ GPU node not yet detected (NFD deploying)" >> $GITHUB_STEP_SUMMARY
+          fi
+        else
+          echo "⏳ GPU operator namespace not yet created (deploying)" >> $GITHUB_STEP_SUMMARY
+        fi
+
+        echo "" >> $GITHUB_STEP_SUMMARY
+        if [ $PREFLIGHT_FAILED -eq 1 ]; then
+          echo "**❌ Pre-flight failed — aborting before convergence wait**" >> $GITHUB_STEP_SUMMARY
+          exit 1
+        else
+          echo "**✅ All pre-flight checks passed**" >> $GITHUB_STEP_SUMMARY
+        fi
+
+    # =========================================================================
+    # Phase 1: ArgoCD Convergence
+    # =========================================================================
+
+    - name: Wait for ArgoCD Convergence
+      shell: bash
+      run: |
+        echo "## ArgoCD Convergence" >> $GITHUB_STEP_SUMMARY
+
+        MAX_WAIT=${{ inputs.convergence_timeout || 1800 }}
+        INTERVAL=30
+        ELAPSED=0
+
+        echo "Waiting for all ArgoCD applications to converge (timeout: ${MAX_WAIT}s)..."
+
+        while [ $ELAPSED -lt $MAX_WAIT ]; do
+          # Check ArgoCD is available
+          if ! oc get applications -n openshift-gitops &>/dev/null; then
+            echo "  ArgoCD not yet available (${ELAPSED}s)"
+            sleep $INTERVAL
+            ELAPSED=$((ELAPSED + INTERVAL))
+            continue
+          fi
+
+          # grep -c exits 1 when count is 0, so use || true (NOT || echo "0"
+          # which would append a second "0" and produce "0\n0")
+          TOTAL_APPS=$(oc get applications -n openshift-gitops --no-headers 2>/dev/null | wc -l | tr -d '[:space:]')
+          HEALTHY=$(oc get applications -n openshift-gitops --no-headers 2>/dev/null | grep -c "Healthy" || true)
+          SYNCED_HEALTHY=$(oc get applications -n openshift-gitops --no-headers 2>/dev/null | grep -c "Synced.*Healthy" || true)
+          PROGRESSING=$(oc get applications -n openshift-gitops --no-headers 2>/dev/null | grep -c "Progressing" || true)
+          DEGRADED=$(oc get applications -n openshift-gitops --no-headers 2>/dev/null | grep -c "Degraded" || true)
+          MISSING=$(oc get applications -n openshift-gitops --no-headers 2>/dev/null | grep -c "Missing" || true)
+
+          echo "  Apps: ${HEALTHY}/${TOTAL_APPS} healthy (${SYNCED_HEALTHY} synced), ${PROGRESSING} progressing, ${DEGRADED} degraded (${ELAPSED}s)"
+
+          # Success: all apps healthy (health is authoritative; sync drift from
+          # operator-managed CRDs is cosmetic and not a convergence failure)
+          if [ "$TOTAL_APPS" -gt 0 ] && [ "$HEALTHY" -eq "$TOTAL_APPS" ]; then
+            if [ "$SYNCED_HEALTHY" -lt "$TOTAL_APPS" ]; then
+              echo "⚠️ All $TOTAL_APPS apps healthy but $((TOTAL_APPS - SYNCED_HEALTHY)) not fully synced (operator drift)" >> $GITHUB_STEP_SUMMARY
+              oc get applications -n openshift-gitops --no-headers 2>/dev/null | grep -v "Synced" | while read line; do
+                echo "  - $line" >> $GITHUB_STEP_SUMMARY
+              done
+              echo "" >> $GITHUB_STEP_SUMMARY
+            fi
+            echo "✅ All $TOTAL_APPS ArgoCD applications converged" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            oc get applications -n openshift-gitops --no-headers 2>/dev/null | while read line; do
+              echo "- $line" >> $GITHUB_STEP_SUMMARY
+            done
+            break
+          fi
+
+          # Log non-healthy apps for diagnostics
+          if [ "$PROGRESSING" -gt 0 ]; then
+            echo "  Progressing apps:"
+            oc get applications -n openshift-gitops --no-headers 2>/dev/null | grep "Progressing" | while read line; do
+              echo "    $line"
+            done
+          fi
+
+          # If apps are still progressing (not degraded), keep waiting
+          if [ "$DEGRADED" -eq 0 ] && [ "$PROGRESSING" -gt 0 ]; then
+            sleep $INTERVAL
+            ELAPSED=$((ELAPSED + INTERVAL))
+            continue
+          fi
+
+          # If any app is degraded, log it and keep waiting (may self-heal)
+          if [ "$DEGRADED" -gt 0 ]; then
+            echo "  Degraded apps (may self-heal):"
+            oc get applications -n openshift-gitops --no-headers 2>/dev/null | grep "Degraded" | while read line; do
+              echo "    $line"
+            done
+          fi
+
+          sleep $INTERVAL
+          ELAPSED=$((ELAPSED + INTERVAL))
+        done
+
+        if [ $ELAPSED -ge $MAX_WAIT ]; then
+          echo "❌ ArgoCD convergence timeout after ${MAX_WAIT}s" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Application Status:**" >> $GITHUB_STEP_SUMMARY
+          oc get applications -n openshift-gitops --no-headers 2>/dev/null | while read line; do
+            echo "- $line" >> $GITHUB_STEP_SUMMARY
+          done
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Non-healthy apps:**" >> $GITHUB_STEP_SUMMARY
+          oc get applications -n openshift-gitops --no-headers 2>/dev/null | grep -v "Healthy" | while read line; do
+            echo "- $line" >> $GITHUB_STEP_SUMMARY
+          done
+          exit 1
+        fi
+
+    # =========================================================================
+    # Phase 2: Sealed Secrets Decryption
+    # =========================================================================
+
+    - name: Validate Sealed Secrets
+      shell: bash
+      run: |
+        echo "## Sealed Secrets Validation" >> $GITHUB_STEP_SUMMARY
+
+        # Check sealed-secrets controller is running
+        SS_PODS=$(oc get pods -n sealed-secrets -l app.kubernetes.io/name=sealed-secrets --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l | tr -d '[:space:]')
+        if [ "$SS_PODS" -gt 0 ]; then
+          echo "✅ Sealed Secrets controller running" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ Sealed Secrets controller not running" >> $GITHUB_STEP_SUMMARY
+          oc get pods -n sealed-secrets 2>/dev/null >> $GITHUB_STEP_SUMMARY
+          exit 1
+        fi
+
+        # Verify SealedSecrets have been decrypted into Secrets
+        VALIDATION_FAILED=0
+
+        # Check common secrets
+        for NS_SECRET in "splunk-otel:splunk-otel-secret" "hubble-timescape:hubble-timescape-ingester-creds" "intersight-otel:intersight-api-credentials"; do
+          NS=$(echo $NS_SECRET | cut -d: -f1)
+          SECRET=$(echo $NS_SECRET | cut -d: -f2)
+
+          if oc get secret "$SECRET" -n "$NS" &>/dev/null; then
+            echo "✅ Secret $NS/$SECRET exists" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Secret $NS/$SECRET not found (SealedSecret not decrypted)" >> $GITHUB_STEP_SUMMARY
+            VALIDATION_FAILED=1
+          fi
+        done
+
+        # Check GPU secrets (only on GPU clusters)
+        GPU_NODE=$(oc get nodes -l nvidia.com/gpu.present=true --no-headers 2>/dev/null | head -1)
+        if [ -n "$GPU_NODE" ] || oc get namespace nim-llm &>/dev/null; then
+          for SECRET in "ngc-api-key" "webserver-credentials"; do
+            if oc get secret "$SECRET" -n nim-llm &>/dev/null; then
+              echo "✅ Secret nim-llm/$SECRET exists" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "❌ Secret nim-llm/$SECRET not found" >> $GITHUB_STEP_SUMMARY
+              VALIDATION_FAILED=1
+            fi
+          done
+        fi
+
+        if [ $VALIDATION_FAILED -eq 1 ]; then
+          exit 1
+        fi
+
+    # =========================================================================
+    # Phase 3: Storage Validation
+    # =========================================================================
+
+    - name: Validate Storage
+      shell: bash
+      run: |
+        echo "## Storage Validation" >> $GITHUB_STEP_SUMMARY
+
+        # Check StorageClass exists
+        SC_COUNT=$(oc get storageclass --no-headers 2>/dev/null | wc -l | tr -d '[:space:]')
+        if [ "$SC_COUNT" -gt 0 ]; then
+          echo "✅ StorageClasses available ($SC_COUNT found)" >> $GITHUB_STEP_SUMMARY
+          oc get storageclass --no-headers 2>/dev/null | while read line; do
+            echo "  - $line" >> $GITHUB_STEP_SUMMARY
+          done
+        else
+          echo "❌ No StorageClasses found" >> $GITHUB_STEP_SUMMARY
+          exit 1
+        fi
+
+        # Check PVCs are bound (not Pending)
+        PENDING_PVCS=$(oc get pvc -A --no-headers 2>/dev/null | grep -c "Pending" || true)
+        BOUND_PVCS=$(oc get pvc -A --no-headers 2>/dev/null | grep -c "Bound" || true)
+
+        if [ "$PENDING_PVCS" -gt 0 ]; then
+          echo "❌ $PENDING_PVCS PVCs stuck in Pending:" >> $GITHUB_STEP_SUMMARY
+          oc get pvc -A --no-headers 2>/dev/null | grep "Pending" | while read line; do
+            echo "  - $line" >> $GITHUB_STEP_SUMMARY
+          done
+          exit 1
+        elif [ "$BOUND_PVCS" -gt 0 ]; then
+          echo "✅ All $BOUND_PVCS PVCs are Bound" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "ℹ️ No PVCs found" >> $GITHUB_STEP_SUMMARY
+        fi
+
+    # =========================================================================
+    # Phase 4: Pod Health (all namespaces)
+    # =========================================================================
+
+    - name: Validate Pod Health
+      shell: bash
+      run: |
+        echo "## Pod Health" >> $GITHUB_STEP_SUMMARY
+
+        # After fresh deploy, platform pods (openshift-*) cycle through
+        # CrashLoopBackOff during MCO reboot recovery. Retry to allow
+        # transient errors to resolve before declaring failure.
+        MAX_RETRIES=10
+        RETRY_INTERVAL=30
+        ATTEMPT=0
+
+        while [ $ATTEMPT -lt $MAX_RETRIES ]; do
+          PROBLEM_PODS=$(oc get pods -A --no-headers 2>/dev/null | \
+            grep -E "ImagePullBackOff|ErrImagePull|CrashLoopBackOff|CreateContainerError" || true)
+          PROBLEM_COUNT=$(echo "$PROBLEM_PODS" | grep -c . || true)
+
+          if [ -z "$PROBLEM_PODS" ] || [ "$PROBLEM_COUNT" -eq 0 ] 2>/dev/null; then
+            echo "✅ No pods in error state" >> $GITHUB_STEP_SUMMARY
+            break
+          fi
+
+          ATTEMPT=$((ATTEMPT + 1))
+          if [ $ATTEMPT -lt $MAX_RETRIES ]; then
+            echo "  $PROBLEM_COUNT pods in error state, retrying in ${RETRY_INTERVAL}s ($ATTEMPT/$MAX_RETRIES)..."
+            echo "$PROBLEM_PODS" | head -5 | while read line; do echo "    $line"; done
+            sleep $RETRY_INTERVAL
+          fi
+        done
+
+        if [ $ATTEMPT -ge $MAX_RETRIES ] && [ -n "$PROBLEM_PODS" ]; then
+          echo "❌ $PROBLEM_COUNT pods still in error state after $((MAX_RETRIES * RETRY_INTERVAL))s:" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "$PROBLEM_PODS" | head -20 >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          exit 1
+        fi
+
+        # Check for stuck Pending pods (excluding Jobs that are queued)
+        PENDING_PODS=$(oc get pods -A --field-selector=status.phase=Pending --no-headers 2>/dev/null || true)
+        PENDING_COUNT=$(echo "$PENDING_PODS" | grep -c . || true)
+
+        if [ -n "$PENDING_PODS" ] && [ "$PENDING_COUNT" -gt 0 ] 2>/dev/null; then
+          echo "⚠️ $PENDING_COUNT pods in Pending state:" >> $GITHUB_STEP_SUMMARY
+          echo "$PENDING_PODS" | head -10 | while read line; do
+            echo "  - $line" >> $GITHUB_STEP_SUMMARY
+          done
+        fi
+
+    # =========================================================================
+    # Phase 5: Operator Health
+    # =========================================================================
+
+    - name: Validate OLM Operators
+      shell: bash
+      run: |
+        echo "## OLM Operator Health" >> $GITHUB_STEP_SUMMARY
+
+        VALIDATION_FAILED=0
+
+        # Check CSVs across all namespaces managed by our GitOps
+        for NS in "openshift-nfd" "nvidia-gpu-operator" "tetragon" "openshift-storage"; do
+          CSVS=$(oc get csv -n "$NS" --no-headers 2>/dev/null || true)
+          if [ -z "$CSVS" ]; then
+            continue
+          fi
+
+          FAILED_CSV=$(echo "$CSVS" | grep -v "Succeeded" || true)
+          if [ -n "$FAILED_CSV" ]; then
+            echo "❌ Failed CSV in $NS:" >> $GITHUB_STEP_SUMMARY
+            echo "  $FAILED_CSV" >> $GITHUB_STEP_SUMMARY
+            VALIDATION_FAILED=1
+          else
+            CSV_NAME=$(echo "$CSVS" | awk '{print $1}' | head -1)
+            echo "✅ $NS: $CSV_NAME (Succeeded)" >> $GITHUB_STEP_SUMMARY
+          fi
+        done
+
+        if [ $VALIDATION_FAILED -eq 1 ]; then
+          exit 1
+        fi
+
+    # =========================================================================
+    # Phase 6: GPU Workload Validation (GPU clusters only)
+    # =========================================================================
+
+    - name: Validate GPU Stack
+      shell: bash
+      run: |
+        echo "## GPU Stack Validation" >> $GITHUB_STEP_SUMMARY
+
+        # Check if this is a GPU cluster
+        if ! oc get namespace nvidia-gpu-operator &>/dev/null; then
+          echo "ℹ️ Not a GPU cluster - skipping GPU validation" >> $GITHUB_STEP_SUMMARY
+          exit 0
+        fi
+
+        VALIDATION_FAILED=0
+
+        # Check NFD labels exist
+        GPU_LABELS=$({ oc get nodes -o jsonpath='{.items[0].metadata.labels}' 2>/dev/null || true; } | grep -o '"nvidia.com/gpu[^"]*"' | wc -l || true)
+        GPU_LABELS="${GPU_LABELS:-0}"
+        if [ "$GPU_LABELS" -gt 0 ]; then
+          echo "✅ NFD GPU labels present ($GPU_LABELS nvidia.com labels)" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ No NFD GPU labels found on nodes" >> $GITHUB_STEP_SUMMARY
+          VALIDATION_FAILED=1
+        fi
+
+        # Check GPU allocatable
+        GPU_COUNT=$(oc get nodes -o jsonpath='{.items[0].status.allocatable.nvidia\.com/gpu}' 2>/dev/null || echo "0")
+        GPU_COUNT="${GPU_COUNT:-0}"
+        if [ "$GPU_COUNT" -gt 0 ]; then
+          echo "✅ GPU allocatable: $GPU_COUNT" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ No GPUs allocatable on nodes" >> $GITHUB_STEP_SUMMARY
+          VALIDATION_FAILED=1
+        fi
+
+        # Check GPU operator pods
+        GPU_PODS=$(oc get pods -n nvidia-gpu-operator --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l | tr -d '[:space:]')
+        if [ "$GPU_PODS" -gt 0 ]; then
+          echo "✅ GPU Operator pods running ($GPU_PODS)" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ No GPU Operator pods running" >> $GITHUB_STEP_SUMMARY
+          VALIDATION_FAILED=1
+        fi
+
+        if [ $VALIDATION_FAILED -eq 1 ]; then
+          exit 1
+        fi
+
+    - name: Validate NIM Inference
+      shell: bash
+      run: |
+        echo "## NIM Inference Validation" >> $GITHUB_STEP_SUMMARY
+
+        # Check if NIM namespace exists (GPU cluster)
+        if ! oc get namespace nim-llm &>/dev/null; then
+          echo "ℹ️ NIM not deployed on this cluster" >> $GITHUB_STEP_SUMMARY
+          exit 0
+        fi
+
+        VALIDATION_FAILED=0
+
+        # Check model download job completed
+        DL_STATUS=$(oc get job nim-model-download -n nim-llm -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' 2>/dev/null || echo "")
+        if [ "$DL_STATUS" = "True" ]; then
+          echo "✅ Model download complete" >> $GITHUB_STEP_SUMMARY
+        else
+          DL_FAILED=$(oc get job nim-model-download -n nim-llm -o jsonpath='{.status.conditions[?(@.type=="Failed")].status}' 2>/dev/null || echo "")
+          if [ "$DL_FAILED" = "True" ]; then
+            echo "❌ Model download failed" >> $GITHUB_STEP_SUMMARY
+            VALIDATION_FAILED=1
+          else
+            echo "⚠️ Model download status unclear (job may still be running)" >> $GITHUB_STEP_SUMMARY
+          fi
+        fi
+
+        # Check NIM pod is running
+        NIM_PODS=$(oc get pods -n nim-llm -l app.kubernetes.io/part-of=nim-service --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l | tr -d '[:space:]')
+        if [ "$NIM_PODS" -gt 0 ]; then
+          echo "✅ NIM inference pod running" >> $GITHUB_STEP_SUMMARY
+        else
+          # Check if NIMService exists (it may still be starting)
+          if oc get nimservice -n nim-llm -o name | head -1 &>/dev/null; then
+            echo "⚠️ NIM inference pod not yet running (NIMService exists, may still be starting)" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ NIMService not yet created (model download may still be in progress)" >> $GITHUB_STEP_SUMMARY
+          fi
+        fi
+
+        if [ $VALIDATION_FAILED -eq 1 ]; then
+          exit 1
+        fi
+
+    # =========================================================================
+    # Phase 7: Observability Validation
+    # =========================================================================
+
+    - name: Validate Observability Stack
+      shell: bash
+      run: |
+        echo "## Observability Stack" >> $GITHUB_STEP_SUMMARY
+
+        # Check Splunk OTel collector
+        SPLUNK_PODS=$(oc get pods -n splunk-otel --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l | tr -d '[:space:]')
+        if [ "$SPLUNK_PODS" -gt 0 ]; then
+          echo "✅ Splunk OTel collector running ($SPLUNK_PODS pods)" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ Splunk OTel collector not running" >> $GITHUB_STEP_SUMMARY
+          oc get pods -n splunk-otel --no-headers 2>/dev/null >> $GITHUB_STEP_SUMMARY || true
+          exit 1
+        fi
+
+        # Check Hubble Timescape
+        HT_PODS=$(oc get pods -n hubble-timescape --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l | tr -d '[:space:]')
+        if [ "$HT_PODS" -gt 0 ]; then
+          echo "✅ Hubble Timescape running ($HT_PODS pods)" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ Hubble Timescape not running" >> $GITHUB_STEP_SUMMARY
+          oc get pods -n hubble-timescape --no-headers 2>/dev/null >> $GITHUB_STEP_SUMMARY || true
+          exit 1
+        fi
+
+        # Check Tetragon
+        TET_PODS=$(oc get pods -n tetragon --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l | tr -d '[:space:]')
+        if [ "$TET_PODS" -gt 0 ]; then
+          echo "✅ Tetragon running ($TET_PODS pods)" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ Tetragon not running" >> $GITHUB_STEP_SUMMARY
+          oc get pods -n tetragon --no-headers 2>/dev/null >> $GITHUB_STEP_SUMMARY || true
+          exit 1
+        fi
+
+        # Check Vector exporter
+        VEC_PODS=$(oc get pods -n hubble-timescape -l app.kubernetes.io/name=vector --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l | tr -d '[:space:]')
+        if [ "$VEC_PODS" -gt 0 ]; then
+          echo "✅ Vector exporter running ($VEC_PODS pods)" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "⚠️ Vector exporter not running" >> $GITHUB_STEP_SUMMARY
+        fi
+
+    # =========================================================================
+    # Summary
+    # =========================================================================
+
+    - name: Test Summary
+      if: success()
+      run: |
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "---" >> $GITHUB_STEP_SUMMARY
+        echo "**✅ Workload test passed**" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "All ArgoCD applications converged. Sealed secrets decrypted. Operators healthy. Workloads running." >> $GITHUB_STEP_SUMMARY
+
+    - name: Test Failure Summary
+      if: failure()
+      run: |
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "---" >> $GITHUB_STEP_SUMMARY
+        echo "**❌ Workload test failed**" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "Review the failed steps above for details." >> $GITHUB_STEP_SUMMARY

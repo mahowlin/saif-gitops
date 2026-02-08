@@ -1,0 +1,22 @@
+{{- if .Values.ui.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "hubble-timescape-ui.service.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hubble-timescape-ui.labels" . | nindent 4 }}
+  {{- with .Values.ui.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.ui.service.type }}
+  ports:
+    - protocol: TCP
+      name: ui-http
+      port: {{ include "hubble-timescape-ui.service.port" . }}
+      targetPort: ui-http
+  selector:
+    {{- include "hubble-timescape-ui.selectorLabels" . | nindent 4 }}
+{{- end }}

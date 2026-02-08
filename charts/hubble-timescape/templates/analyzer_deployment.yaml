@@ -1,0 +1,46 @@
+{{- if and (not .Values.lite.enabled) .Values.analyzer.enabled -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "hubble-timescape-analyzer.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hubble-timescape-analyzer.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.analyzer.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "hubble-timescape-analyzer.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with include "hubble-timescape-analyzer.podAnnotations" . }}
+      annotations:
+        {{- . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "hubble-timescape-analyzer.podLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ .Values.analyzer.serviceAccount.name | quote }}
+      {{- $imagePullSecrets := .Values.analyzer.image.pullSecrets }}
+      {{- with $imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.analyzer.podSecurityContext | nindent 8 }}
+      priorityClassName: {{ .Values.analyzer.priorityClassName }}
+      containers: {{- include "hubble-timescape-analyzer.containers" . | nindent 8 }}
+      {{- with .Values.analyzer.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.analyzer.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.analyzer.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes: {{- include "hubble-timescape-analyzer.volumes" . | nindent 6 }}
+{{- end }}

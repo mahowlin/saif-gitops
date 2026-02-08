@@ -1,0 +1,31 @@
+{{- if and .Values.ingester.enabled (not .Values.lite.enabled) }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "hubble-timescape-migrate.name" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hubble-timescape-migrate.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    log-level: {{ .Values.migrate.logLevel | default .Values.logLevel }}
+    pprof: {{ .Values.migrate.pprof.enabled }}
+    pprof-address: {{ .Values.migrate.pprof.address | quote }}
+    pprof-port: {{ include "hubble-timescape-migrate.pprof.port" . }}
+    gops: {{ .Values.migrate.gops.enabled }}
+    gops-port: {{ include "hubble-timescape-migrate.gops.port" . }}
+    connection-logs-ttl: {{ include "hubble-timescape.connection-logs.ttl" . }}
+    connection-logs-hourly-rollup-age: {{ include "hubble-timescape.connection-logs.hourlyRollupAge" . }}
+    connection-logs-daily-rollup-age: {{ include "hubble-timescape.connection-logs.dailyRollupAge" . }}
+    flows-ttl: {{ include "hubble-timescape.flows.ttl" . }}
+    k8s-ttl: {{ include "hubble-timescape.k8s.ttl" . }}
+    k8s-aggregation-ttl: {{ include "hubble-timescape.k8s.aggregation-ttl" . }}
+    assessment-reports-ttl: {{ include "hubble-timescape.assessment-reports.ttl" . }}
+    system-status-ttl: {{ include "hubble-timescape.system-status.ttl" . }}
+    {{- $clickhouse := merge dict .Values.migrate.clickhouse .Values.clickhouse (dict "tls" .Values.tls) }}
+    {{- if (include "hubble-timescape.clickhouse-has-custom-ca" $clickhouse) }}
+    tls-clickhouse-ca-files: "/var/lib/hubble-timescape/clickhouse-certs/clickhouse-ca.crt"
+    {{- end }}
+    clickhouse-storage-mode: {{ .Values.clickhouse.settings.storage.policy | quote }}
+{{- end }}

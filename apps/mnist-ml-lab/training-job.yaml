@@ -1,0 +1,57 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mnist-train
+  namespace: mnist-ml-lab
+  labels:
+    app: mnist-train
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app: mnist-train
+      annotations:
+        openshift.io/required-scc: nonroot-v2
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: mnist-train
+          image: registry.example.com:5000/mnist/train:v1
+          command: ["sh", "-c", "python3 -u main.py --epochs 1 --save-model"]
+          env:
+            - name: PYTHONUNBUFFERED
+              value: "1"
+          resources:
+            requests:
+              memory: "2Gi"
+              cpu: "2"
+            limits:
+              memory: "2Gi"
+              cpu: "4"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - "ALL"
+          volumeMounts:
+            - name: model-storage
+              mountPath: /app/model
+            - name: model-storage
+              mountPath: /data
+      volumes:
+        - name: model-storage
+          persistentVolumeClaim:
+            claimName: mnist-model

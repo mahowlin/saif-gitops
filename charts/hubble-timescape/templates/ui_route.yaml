@@ -1,0 +1,41 @@
+{{- if .Values.ui.route.enabled }}
+---
+apiVersion: {{ .Values.ui.route.apiVersion }}
+kind: {{ .Values.ui.route.kind }}
+metadata:
+  name: {{ include "hubble-timescape-ui.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hubble-timescape-ui.labels" . | nindent 4 }}
+    {{- with .Values.ui.route.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.ui.route.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ui.route.parentRefs }}
+  parentRefs:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.ui.route.hostnames }}
+  hostnames:
+    {{- tpl (toYaml .) $ | nindent 4 }}
+  {{- end }}
+  rules:
+    {{- if .Values.ui.route.additionalRules }}
+    {{- tpl (toYaml .Values.ui.route.additionalRules) $ | nindent 4 }}
+    {{- end }}
+    - backendRefs:
+        - name: {{ include "hubble-timescape-ui.service.name" . }}
+          port: {{ include "hubble-timescape-ui.service.port" . }}
+      {{- with .Values.ui.route.filters }}
+      filters:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.ui.route.matches }}
+      matches:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

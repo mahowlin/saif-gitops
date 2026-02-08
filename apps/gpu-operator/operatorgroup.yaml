@@ -1,0 +1,17 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+# OperatorGroup for NVIDIA GPU Operator
+# OwnNamespace mode required - GPU Operator doesn't support AllNamespaces
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: nvidia-gpu-operator
+  namespace: nvidia-gpu-operator
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  targetNamespaces:
+    - nvidia-gpu-operator
+  upgradeStrategy: Default

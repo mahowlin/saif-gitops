@@ -1,0 +1,67 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+# OpenShift SCC RoleBindings for Hubble Timescape
+# Required for pods to run with proper security contexts
+#
+# Components need different SCCs:
+# - Most Timescape pods: hubble-timescape-anyuid (custom SCC with seccomp support)
+# - k8s-exporter: privileged (hostPath + root)
+# - Vector: privileged (hostPath volumes)
+#
+# NOTE: The hubble-timescape chart sets seccompProfile: RuntimeDefault on all pods.
+# OpenShift's built-in 'anyuid' SCC does not allow explicit seccomp profiles.
+# We use a custom SCC (hubble-timescape-anyuid) defined in custom-scc.yaml.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: hubble-timescape-anyuid
+subjects:
+  # ClickHouse - runs as UID 101 (uses default SA via operator)
+  - kind: ServiceAccount
+    name: default
+    namespace: hubble-timescape
+  # Timescape core components - run as non-root UID 65532
+  - kind: ServiceAccount
+    name: hubble-timescape-analyzer
+    namespace: hubble-timescape
+  - kind: ServiceAccount
+    name: hubble-timescape-ingester
+    namespace: hubble-timescape
+  - kind: ServiceAccount
+    name: hubble-timescape-server
+    namespace: hubble-timescape
+  - kind: ServiceAccount
+    name: hubble-timescape-ui
+    namespace: hubble-timescape
+  - kind: ServiceAccount
+    name: hubble-timescape-certgen
+    namespace: hubble-timescape
+  - kind: ServiceAccount
+    name: hubble-timescape-trimmer
+    namespace: hubble-timescape
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  # Use custom SCC that allows seccompProfile: RuntimeDefault
+  name: system:openshift:scc:hubble-timescape-anyuid
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: hubble-timescape-privileged
+subjects:
+  # k8s-exporter - needs hostPath + root for reading Cilium logs
+  - kind: ServiceAccount
+    name: hubble-timescape-k8s-exporter
+    namespace: hubble-timescape
+  # Vector - needs hostPath for reading hubble/tetragon logs
+  - kind: ServiceAccount
+    name: vector-exporter
+    namespace: hubble-timescape
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:openshift:scc:privileged

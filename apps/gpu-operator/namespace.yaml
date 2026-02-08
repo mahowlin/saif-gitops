@@ -1,0 +1,16 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+# NVIDIA GPU Operator namespace
+# Required for GPU infrastructure on OpenShift
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nvidia-gpu-operator
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+  labels:
+    app.kubernetes.io/name: gpu-operator
+    app.kubernetes.io/managed-by: argocd
+    openshift.io/cluster-monitoring: "true"

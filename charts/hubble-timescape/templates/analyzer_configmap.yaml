@@ -1,0 +1,33 @@
+{{- if and .Values.analyzer.enabled (not .Values.lite.enabled) }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "hubble-timescape-analyzer.name" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hubble-timescape-analyzer.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    log-level: {{ .Values.analyzer.logLevel | default .Values.logLevel }}
+    {{- if .Values.analyzer.prometheus.enabled }}
+    prometheus-serve-addr: ":{{ .Values.analyzer.prometheus.port }}"
+    {{- end }}
+    pprof: {{ .Values.analyzer.pprof.enabled }}
+    pprof-address: {{ .Values.analyzer.pprof.address | quote }}
+    pprof-port: {{ .Values.analyzer.pprof.port }}
+    gops: {{ .Values.analyzer.gops.enabled }}
+    gops-port: {{ .Values.analyzer.gops.port }}
+    {{- $clickhouse := merge dict .Values.analyzer.clickhouse .Values.clickhouse (dict "tls" .Values.tls) }}
+    {{- if (include "hubble-timescape.clickhouse-has-custom-ca" $clickhouse) }}
+    tls-clickhouse-ca-files: "/var/lib/hubble-timescape/clickhouse-certs/clickhouse-ca.crt"
+    {{- end }}
+    log-query-progress: {{ $clickhouse.client.progress.log | quote }}
+    enable-clickhouse-server-logs: {{ $clickhouse.client.serverLogs.log | quote }}
+    health-listen-address: ":{{ .Values.analyzer.healthCheckPort }}"
+    {{- include "hubble-timescape-analyzer.config" . | nindent 4 }}
+{{- end }}
+
+{{- define "hubble-timescape-analyzer.config" -}}
+schedule-interval: {{ .Values.analyzer.scheduleInterval }}
+{{- end }}

@@ -1,0 +1,41 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+# LVMCluster CR - Configures LVMS to use mdadm RAID array
+#
+# The mdadm array is created by MachineConfig at boot time:
+# - 4x NVMe drives in RAID 10 + 1 hot spare
+# - Array device: /dev/md/nvme-data
+# - ~3.2TB usable capacity
+#
+# LVMS uses TopoLVM to provision PVs from this device.
+apiVersion: lvm.topolvm.io/v1alpha1
+kind: LVMCluster
+metadata:
+  name: lvmcluster
+  namespace: openshift-storage
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  storage:
+    deviceClasses:
+      - name: nvme-raid10
+        default: true
+        # Use the mdadm RAID array created by MachineConfig
+        deviceSelector:
+          paths:
+            - /dev/md/nvme-data
+        # Thin provisioning configuration
+        thinPoolConfig:
+          name: thin-pool-0
+          # Reserve 10% for metadata
+          sizePercent: 90
+          # Allow overprovisioning (sum of PVCs can exceed physical)
+          overprovisionRatio: 10
+        # Node selector (optional - for multi-node clusters)
+        # nodeSelector:
+        #   nodeSelectorTerms:
+        #     - matchExpressions:
+        #       - key: node-role.kubernetes.io/worker
+        #         operator: Exists

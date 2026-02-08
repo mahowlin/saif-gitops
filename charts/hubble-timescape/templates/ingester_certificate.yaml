@@ -1,0 +1,26 @@
+{{- $tls := merge dict .Values.ingester.server.tls .Values.tls -}}
+{{- if and (or (eq (include "hubble-timescape-ingester.server.http.enabled" .) "true") (eq (include "hubble-timescape-ingester.server.grpc.enabled" .) "true")) $tls.enabled $tls.auto.enabled (eq $tls.auto.method "certmanager") }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: hubble-timescape-ingester-server-cert
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hubble-timescape-server.labels" . | nindent 4 }}
+spec:
+  secretName: hubble-timescape-ingester-server-cert
+  isCA: false
+  privateKey: {{ toYaml .Values.ingester.server.tls.auto.certmanager.privateKey | nindent 4 }}
+  usages:
+    - server auth
+  commonName: hubble-timescape-ingester
+  dnsNames:
+    - "hubble-timescape-ingester"
+    - "hubble-timescape-ingester.{{ .Release.Namespace }}"
+    - "hubble-timescape-ingester.{{ .Release.Namespace }}.svc.cluster.local"
+    - "hubble-timescape-export"
+    - "hubble-timescape-export.{{ .Release.Namespace }}"
+    - "hubble-timescape-export.{{ .Release.Namespace }}.svc.cluster.local"
+  issuerRef:
+    {{- required "ingester.server.tls.auto.certmanager.issuerRef must be set with ingester.server.tls.auto.method=certmanager" $tls.auto.certmanager.issuerRef | toYaml | nindent 4 }}
+{{- end }}

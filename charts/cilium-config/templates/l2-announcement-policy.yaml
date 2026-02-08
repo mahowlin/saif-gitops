@@ -1,0 +1,18 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+{{- if .Values.l2.enabled }}
+# CiliumL2AnnouncementPolicy - Enables ARP-based IP advertisement
+apiVersion: cilium.io/v2alpha1
+kind: CiliumL2AnnouncementPolicy
+metadata:
+  name: {{ .Values.clusterName }}-l2-policy
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  loadBalancerIPs: true
+  interfaces:
+    - {{ .Values.l2.device }}
+{{- end }}

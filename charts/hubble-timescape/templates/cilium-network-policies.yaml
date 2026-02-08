@@ -1,0 +1,232 @@
+{{- if .Values.networkPolicies.enabled }}
+{{- $clickhouseTLS := merge dict .Values.clickhouse.tls .Values.tls -}}
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: hubble-timescape-clickhouse
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hubble-timescape-clickhouse.labels" . | nindent 4 }}
+spec:
+  endpointSelector:
+    matchLabels:
+      {{- include "hubble-timescape-clickhouse.selectorLabels" . | nindent 6 }}
+  ingress:
+    # allow access from other clickhouse nodes on the interserver and TCP ports
+    - fromEndpoints:
+        - matchLabels:
+            {{- include "hubble-timescape-clickhouse.selectorLabels" . | nindent 12 }}
+      toPorts:
+        - ports:
+            {{- if $clickhouseTLS.enabled }}
+            - port: "9010"
+              protocol: TCP
+            - port: "9440"
+              protocol: TCP
+            {{- else }}
+            - port: "9009"
+              protocol: TCP
+            - port: "9000"
+              protocol: TCP
+            {{- end }}
+    # allow access from other clickhouse-operator on HTTP port
+    - fromEndpoints:
+        - matchLabels:
+            "clickhouse.altinity.com/app": chop
+            "k8s:io.kubernetes.pod.namespace": {{ .Values.networkPolicies.clickhouseOperatorNamespace }}
+      toPorts:
+        - ports:
+            {{- if $clickhouseTLS.enabled }}
+            - port: "8443"
+            {{- else }}
+            - port: "8123"
+            {{- end }}
+              protocol: TCP
+    # allow access from timescape components on TCP port
+    - fromEndpoints:
+        {{- if .Values.ingester.enabled }}
+        - matchLabels:
+            {{- include "hubble-timescape-ingester.selectorLabels" . | nindent 12 }}
+        {{- end }}
+        {{- if .Values.server.enabled }}
+        - matchLabels:
+            {{- include "hubble-timescape-server.selectorLabels" . | nindent 12 }}
+        {{- end }}
+        {{- if .Values.trimmer.flowsCount }}
+        - matchLabels:
+            {{- include "hubble-timescape-trimmer.selectorLabels" . | nindent 12 }}
+        {{- end }}
+        {{- if .Values.analyzer.enabled }}
+        - matchLabels:
+            {{- include "hubble-timescape-analyzer.selectorLabels" . | nindent 12 }}
+        {{- end }}
+      toPorts:
+        - ports:
+            {{- if $clickhouseTLS.enabled }}
+            - port: "9440"
+            {{- else }}
+            - port: "9000"
+            {{- end }}
+              protocol: TCP
+    {{- if .Values.networkPolicies.monitoring.ingress.fromEndpoints }}
+    # allow access from monitoring endpoints to metrics ports
+    - fromEndpoints:
+        {{- .Values.networkPolicies.monitoring.ingress.fromEndpoints | toYaml | nindent 10 }}
+      toPorts:
+        - ports:
+            - port: "8001"
+              protocol: TCP
+            {{- if .Values.clickhouse.cluster.prometheus.tableMetrics.enabled }}
+            {{- if $clickhouseTLS.enabled }}
+            - port: "8443"
+            {{- else }}
+            - port: "8123"
+            {{- end }}
+              protocol: TCP
+            {{- end }}
+    {{- end }}
+
+{{- if and .Values.ingester.enabled }}
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: hubble-timescape-ingester
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hubble-timescape-ingester.labels" . | nindent 4 }}
+spec:
+  endpointSelector:
+    matchLabels:
+      {{- include "hubble-timescape-ingester.selectorLabels" . | nindent 6 }}
+  ingress:
+    # Deny all ingress traffic by default
+    - {}
+    {{- if (eq (include "hubble-timescape-ingester.server.http.enabled" .) "true") }}
+    # Allow access from Hubble Enterprise/Cilium Vector for pushing flows directly to Timescape
+    - fromEndpoints:
+        {{- .Values.networkPolicies.push.ingress.fromEndpoints | toYaml | nindent 10 }}
+      toPorts:
+        - ports:
+            - port: "push"
+              protocol: TCP
+    {{- end }}
+    {{- if (eq (include "hubble-timescape-ingester.server.grpc.enabled" .) "true") }}
+    # Allow access from Cilium Hubble stream exporter for pushing flows directly to Timescape
+    - fromEndpoints:
+        {{- .Values.networkPolicies.stream.ingress.fromEndpoints | toYaml | nindent 10 }}
+      toPorts:
+        - ports:
+            - port: "stream"
+              protocol: TCP
+    {{- end }}
+    {{- if .Values.networkPolicies.monitoring.ingress.fromEndpoints }}
+    - fromEndpoints:
+        {{- .Values.networkPolicies.monitoring.ingress.fromEndpoints | toYaml | nindent 10 }}
+      toPorts:
+        - ports:
+            - port: "9090"
+              protocol: TCP
+    {{- end }}
+    {{- if and .Values.ingester.pprof.enabled .Values.networkPolicies.profiling.ingress.fromEndpoints }}
+    - fromEndpoints:
+        {{- .Values.networkPolicies.profiling.ingress.fromEndpoints | toYaml | nindent 10 }}
+      toPorts:
+        - ports:
+            - port: {{ include "hubble-timescape-ingester.pprof.port" . | quote }}
+              protocol: TCP
+    {{- end }}
+{{- end }}
+
+{{- if and .Values.server.enabled }}
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: hubble-timescape-server
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hubble-timescape-server.labels" . | nindent 4 }}
+spec:
+  endpointSelector:
+    matchLabels:
+      {{- include "hubble-timescape-server.selectorLabels" . | nindent 6 }}
+  ingress:
+    # Deny all ingress traffic by default
+    - {}
+    {{/*
+    TODO: Add rules for ingress from an ingress controller (cilium ingress, ingress-nginx, etc).
+    */}}
+    {{- if .Values.ui.enabled }}
+    # allow access from Timescape UI
+    - fromEndpoints:
+        - matchLabels:
+            {{- include "hubble-timescape-ui.selectorLabels" . | nindent 12 }}
+      toPorts:
+        - ports:
+            - port: server-grpc
+              protocol: TCP
+    {{- end }}
+    {{- if .Values.networkPolicies.hubbleUI.ingress.fromEndpoints }}
+    # allow access from Hubble UI
+    - fromEndpoints:
+        {{- .Values.networkPolicies.hubbleUI.ingress.fromEndpoints | toYaml | nindent 10 }}
+      toPorts:
+        - ports:
+            - port: server-grpc
+              protocol: TCP
+    {{- end }}
+    {{- if .Values.networkPolicies.monitoring.ingress.fromEndpoints }}
+    - fromEndpoints:
+        {{- .Values.networkPolicies.monitoring.ingress.fromEndpoints | toYaml | nindent 10 }}
+      toPorts:
+        - ports:
+            - port: "9090"
+              protocol: TCP
+    {{- end }}
+    {{- if and .Values.server.pprof.enabled .Values.networkPolicies.profiling.ingress.fromEndpoints }}
+    - fromEndpoints:
+        {{- .Values.networkPolicies.profiling.ingress.fromEndpoints | toYaml | nindent 10 }}
+      toPorts:
+        - ports:
+            - port: {{ include "hubble-timescape-server.pprof.port" . | quote }}
+              protocol: TCP
+    {{- end }}
+{{- end }}
+
+{{- if and .Values.analyzer.enabled }}
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: hubble-timescape-analyzer
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hubble-timescape-analyzer.labels" . | nindent 4 }}
+spec:
+  endpointSelector:
+    matchLabels:
+      {{- include "hubble-timescape-analyzer.selectorLabels" . | nindent 6 }}
+  ingress:
+    # Deny all ingress traffic by default
+    - {}
+    {{- if .Values.networkPolicies.monitoring.ingress.fromEndpoints }}
+    - fromEndpoints:
+        {{- .Values.networkPolicies.monitoring.ingress.fromEndpoints | toYaml | nindent 10 }}
+      toPorts:
+        - ports:
+            - port: "9090"
+              protocol: TCP
+    {{- end }}
+    {{- if and .Values.analyzer.pprof.enabled .Values.networkPolicies.profiling.ingress.fromEndpoints }}
+    - fromEndpoints:
+        {{- .Values.networkPolicies.profiling.ingress.fromEndpoints | toYaml | nindent 10 }}
+      toPorts:
+        - ports:
+            - port: {{ include "hubble-timescape-analyzer.pprof.port" . | quote }}
+              protocol: TCP
+    {{- end }}
+{{- end }}
+
+{{- end }}

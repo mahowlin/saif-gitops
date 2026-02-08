@@ -1,0 +1,103 @@
+{{- if and .Values.ui.enabled (not .Values.lite.enabled) }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "hubble-timescape-ui.name" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hubble-timescape-ui.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    log-level: {{ .Values.ui.logLevel | default .Values.logLevel }}
+    {{- if .Values.ui.prometheus.enabled }}
+    prometheus-serve-addr: ":{{ include "hubble-timescape-ui.prometheus.port" . }}"
+    {{- end }}
+    pprof: {{ .Values.ui.pprof.enabled }}
+    pprof-address: {{ .Values.ui.pprof.address | quote }}
+    pprof-port: {{ include "hubble-timescape-ui.pprof.port" . }}
+    gops: {{ .Values.ui.gops.enabled }}
+    gops-port: {{ include "hubble-timescape-ui.gops.port" . }}
+    {{- include "hubble-timescape-ui.config" . | nindent 4 }}
+{{- end }}
+
+{{- define "hubble-timescape-ui.config" -}}
+http-address: {{ printf ":%v" .Values.ui.port | quote }}
+timescape-address: {{ include "hubble-timescape-ui.serverAddress" . }}
+{{- $tls := merge dict .Values.server.tls .Values.tls -}}
+{{- if $tls.enabled }}
+timescape-enable-tls: true
+timescape-ca-files: /var/lib/hubble-timescape-ui/tls/ca.crt
+{{- else }}
+timescape-enable-tls: false
+{{- end }}
+observability:
+  flows:
+    enabled: {{ .Values.ui.observability.flows.enabled }}
+  connections:
+    enabled: {{ .Values.ui.observability.connections.enabled }}
+  topology:
+    enabled: {{ .Values.ui.observability.topology.enabled }}
+  explorer:
+    enabled: {{ .Values.ui.observability.explorer.enabled }}
+network-security:
+  assessment:
+    enabled: {{ .Values.ui.networkSecurity.assessment.enabled }}
+    analyzer:
+      enabled: {{ .Values.analyzer.enabled }}
+  policies:
+    enabled: {{ .Values.ui.networkSecurity.policies.enabled }}
+  enforcement-points:
+    enabled: {{ .Values.ui.networkSecurity.enforcementPoints.enabled }}
+health:
+  system-status:
+    enabled: {{ .Values.ui.health.systemStatus.enabled }}
+load-balancing:
+  enabled: {{ .Values.ui.loadBalancing.enabled }}
+{{- if (eq (include "hubble-timescape-ui.auth.enabled" .) "true") }}
+oauth2:
+  enabled: true
+  oidc:
+    {{- $clientID := .Values.ui.auth.oidc.clientID | default .Values.server.rbac.oidcClientID }}
+    {{- if not $clientID }}
+    {{ fail "Invalid configuration, .Values.ui.auth.oidc.clientID or .Values.server.rbac.oidcClientID needs to be set when authentication is enabled." }}
+    {{- end }}
+    client-id: {{ $clientID }}
+    client-assertion-type: {{ .Values.ui.auth.oidc.clientAssertionType }}
+    client-assertion-file: {{ .Values.ui.auth.oidc.clientAssertionFile }}
+
+    {{- $issuerURL := .Values.ui.auth.oidc.issuerURL | default .Values.server.rbac.oidcURL }}
+    {{- if not $issuerURL }}
+    {{ fail "Invalid configuration, .Values.ui.auth.oidc.issuerURL needs to be set when authentication is enabled." }}
+    {{- end }}
+    issuer-url: {{ $issuerURL }}
+    {{- $oidcRedirectURL := .Values.ui.auth.oidc.redirectURL }}
+    {{- if and (not $oidcRedirectURL) .Values.ui.ingress.enabled }}
+    {{- if .Values.ui.ingress.tls.enabled }}
+    {{- $oidcRedirectURL = printf "https://%s/oauth2/callback" .Values.ui.ingress.host }}
+    {{- else }}
+    {{- $oidcRedirectURL = printf "http://%s/oauth2/callback" .Values.ui.ingress.host }}
+    {{- end }}
+    {{- end }}
+    {{- if not $oidcRedirectURL }}
+    {{ fail "Invalid configuration, .Values.ui.auth.oidc.redirectURL needs to be set to to URI_USED_TO_ACCESS_TIMESCAPE_UI/oauth2/callback, when authentication is enabled." }}
+    {{- end }}
+    redirect-url: {{ $oidcRedirectURL }}
+    scopes: {{- .Values.ui.auth.oidc.scopes | toYaml | nindent 6 }}
+    {{- if or .Values.ui.auth.oidc.issuerCA.configMap.name .Values.server.rbac.oidcCA.configMap.name }}
+    issuer-ca: /var/lib/hubble-timescape-ui/tls/oidc-provider-ca.pem
+    {{- end }}
+    id-token-user-claim: {{ .Values.ui.auth.oidc.idTokenUserClaim | quote }}
+    {{- with .Values.ui.auth.oidc.extraFields }}
+    {{- $extraFields := list }}
+    {{- range . }}
+      {{- if not .key }}
+      {{ fail "Invalid configuration, .Values.ui.auth.oidc.extraFields[].key is required and cannot be empty." }}
+      {{- end }}
+      {{- $extraField := printf "%s=%s" .key (.value | default "") }}
+      {{- $extraFields = append $extraFields $extraField }}
+    {{- end }}
+    extra-fields: {{ join "," $extraFields | quote }}
+    {{- end }}
+{{- end }}
+{{- end }}

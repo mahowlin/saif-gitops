@@ -1,0 +1,18 @@
+clickhouse:
+  cluster:
+    enabled: true
+
+k8sExporter:
+  enabled: true
+  export:
+    clusterName: "my-cluster"
+    ciliumNetworkPolicies: true
+    k8sNetworkPolicies: true
+    k8sEndpoints: true
+    ciliumEndpoints: true
+    ciliumIdentities: true
+    tetragonNetworkPolicies: true
+    ciliumNodes: true
+    tetragonNodes: true
+    smartSwitches: true
+    smartSwitchNetworkPolicies: true

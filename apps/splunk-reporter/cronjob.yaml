@@ -1,0 +1,41 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: dashboard-updater
+  namespace: splunk-reporter
+spec:
+  schedule: "*/5 * * * *"  # Every 5 minutes
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: dashboard-updater
+          restartPolicy: OnFailure
+          containers:
+            - name: updater
+              image: registry.example.com:5000/openshift4/ose-tools-rhel9:latest
+              command:
+                - /bin/bash
+                - /scripts/update-dashboard-charts.sh
+              env:
+                - name: SPLUNK_API_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: splunk-credentials
+                      key: api-token
+                # All data queried dynamically - no static values
+              volumeMounts:
+                - name: script
+                  mountPath: /scripts
+          volumes:
+            - name: script
+              configMap:
+                name: dashboard-updater-script
+                defaultMode: 0755

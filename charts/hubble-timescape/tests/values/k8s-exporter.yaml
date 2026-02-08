@@ -1,0 +1,6 @@
+clickhouse:
+  cluster:
+    enabled: true
+
+k8sExporter:
+  enabled: true

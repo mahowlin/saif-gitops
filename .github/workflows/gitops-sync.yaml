@@ -1,0 +1,306 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+name: GitOps Sync
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      cluster:
+        description: 'Cluster to refresh ArgoCD on'
+        required: false
+        type: choice
+        options:
+          - none
+          - ai-pod-1
+          - ai-pod-2
+          - ai-pod-3
+          - ai-pod-4
+        default: none
+      inject_secrets:
+        description: 'Inject application secrets (Splunk, etc.)'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  sync:
+    name: Sync
+    runs-on: [self-hosted, linux, saif-github-runner]
+    container:
+      image: ghcr.io/mahowlin/github-actions-container:${{ vars.CONTAINER_TAG }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Gitea sync disabled - ArgoCD now points directly to GitHub
+      # - name: Push to Gitea
+      #   run: |
+      #     git remote add gitea http://${{ secrets.GITEA_USER }}:${{ secrets.GITEA_TOKEN }}@gitea.example.com:3000/mahowlin/saif-gitops.git || true
+      #     git push gitea main --force
+
+      - name: Sync complete
+        run: echo "ArgoCD will sync directly from GitHub"
+
+  inject-secrets:
+    name: Inject Secrets
+    needs: sync
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.cluster != 'none' && github.event.inputs.inject_secrets == 'true' }}
+    runs-on: [self-hosted, linux, saif-github-runner]
+    container:
+      image: ghcr.io/mahowlin/github-actions-container:${{ vars.CONTAINER_TAG }}
+    steps:
+      - name: Fetch kubeconfig from repo
+        env:
+          KUBECONFIG_REPO_TOKEN: ${{ secrets.KUBECONFIG_REPO_TOKEN }}
+        run: |
+          CLUSTER="${{ github.event.inputs.cluster }}"
+
+          git clone --depth 1 --branch main \
+            # Configure this URL for your kubeconfig storage repository
+            "https://x-access-token:${KUBECONFIG_REPO_TOKEN}@github.com/mahowlin/saif-kubeconfigs.git" \
+            /tmp/kubeconfigs
+
+          cp "/tmp/kubeconfigs/kubeconfig-${CLUSTER}" /tmp/kubeconfig
+          chmod 600 /tmp/kubeconfig
+
+          sed -i "s|server: https://localhost:[0-9]*|server: https://api.${CLUSTER}.example.com:6443|g" /tmp/kubeconfig
+
+      - name: Check Sealed Secrets Status
+        id: sealed-secrets-check
+        run: |
+          export KUBECONFIG=/tmp/kubeconfig
+          CLUSTER="${{ github.event.inputs.cluster }}"
+
+          # Check if Sealed Secrets controller is running
+          if oc get deployment sealed-secrets-controller -n sealed-secrets &>/dev/null; then
+            READY=$(oc get deployment sealed-secrets-controller -n sealed-secrets -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+            if [ "$READY" = "1" ]; then
+              echo "✅ Sealed Secrets is configured on ${CLUSTER}"
+              echo "   Secrets should be deployed via SealedSecret CRs in git"
+              echo "   Skipping workflow-based secret injection (use for migration only)"
+              echo "sealed_secrets_active=true" >> $GITHUB_OUTPUT
+            else
+              echo "⚠️ Sealed Secrets controller not ready, using workflow injection"
+              echo "sealed_secrets_active=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "ℹ️ Sealed Secrets not deployed, using workflow injection"
+            echo "sealed_secrets_active=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Inject Splunk OTel Secret
+        if: steps.sealed-secrets-check.outputs.sealed_secrets_active != 'true'
+        env:
+          SPLUNK_ACCESS_TOKEN: ${{ secrets.SPLUNK_ACCESS_TOKEN }}
+        run: |
+          export KUBECONFIG=/tmp/kubeconfig
+          CLUSTER="${{ github.event.inputs.cluster }}"
+
+          if [ -z "$SPLUNK_ACCESS_TOKEN" ]; then
+            echo "⚠️ SPLUNK_ACCESS_TOKEN not configured - skipping"
+            exit 0
+          fi
+
+          echo "Creating splunk-otel namespace if needed..."
+          oc create namespace splunk-otel --dry-run=client -o yaml | oc apply -f -
+
+          echo "Injecting Splunk OTel secret..."
+          oc -n splunk-otel create secret generic splunk-otel-secret \
+            --from-literal=splunk_observability_access_token="$SPLUNK_ACCESS_TOKEN" \
+            --dry-run=client -o yaml | oc apply -f -
+
+          echo "✅ Splunk OTel secret injected for ${CLUSTER}"
+
+      - name: Inject Splunk Reporter Secret
+        if: steps.sealed-secrets-check.outputs.sealed_secrets_active != 'true'
+        env:
+          SPLUNK_ACCESS_TOKEN: ${{ secrets.SPLUNK_ACCESS_TOKEN }}
+        run: |
+          export KUBECONFIG=/tmp/kubeconfig
+          CLUSTER="${{ github.event.inputs.cluster }}"
+
+          if [ -z "$SPLUNK_ACCESS_TOKEN" ]; then
+            echo "⚠️ SPLUNK_ACCESS_TOKEN not configured - skipping"
+            exit 0
+          fi
+
+          echo "Creating splunk-reporter namespace if needed..."
+          oc create namespace splunk-reporter --dry-run=client -o yaml | oc apply -f -
+
+          echo "Injecting Splunk Reporter API secret..."
+          oc -n splunk-reporter create secret generic splunk-credentials \
+            --from-literal=api-token="$SPLUNK_ACCESS_TOKEN" \
+            --dry-run=client -o yaml | oc apply -f -
+
+          echo "✅ Splunk Reporter secret injected for ${CLUSTER}"
+
+      - name: Inject NGC Secrets for NIM
+        if: steps.sealed-secrets-check.outputs.sealed_secrets_active != 'true'
+        env:
+          NVIDIA_NGC_API_KEY: ${{ secrets.NVIDIA_NGC_API_KEY }}
+        run: |
+          export KUBECONFIG=/tmp/kubeconfig
+          CLUSTER="${{ github.event.inputs.cluster }}"
+
+          if [ -z "$NVIDIA_NGC_API_KEY" ]; then
+            echo "⚠️ NVIDIA_NGC_API_KEY not configured - skipping NIM secrets"
+            exit 0
+          fi
+
+          echo "Creating nim-llm namespace if needed..."
+          oc create namespace nim-llm --dry-run=client -o yaml | oc apply -f -
+
+          echo "Injecting NGC docker pull secret..."
+          oc -n nim-llm create secret docker-registry ngc-secret \
+            --docker-server=nvcr.io \
+            --docker-username='$oauthtoken' \
+            --docker-password="$NVIDIA_NGC_API_KEY" \
+            --dry-run=client -o yaml | oc apply -f -
+
+          echo "Injecting NGC API key secret..."
+          oc -n nim-llm create secret generic ngc-api-key \
+            --from-literal=NGC_API_KEY="$NVIDIA_NGC_API_KEY" \
+            --dry-run=client -o yaml | oc apply -f -
+
+          echo "✅ NGC secrets injected for ${CLUSTER}"
+          echo "   Note: Model download runs automatically via ArgoCD PostSync hook"
+
+      - name: Inject Intersight OTEL Secrets
+        if: steps.sealed-secrets-check.outputs.sealed_secrets_active != 'true'
+        env:
+          INTERSIGHT_API_KEY_ID: ${{ secrets.INTERSIGHT_API_KEY_ID }}
+          INTERSIGHT_SECRET_KEY: ${{ secrets.INTERSIGHT_SECRET_KEY }}
+          SPLUNK_ACCESS_TOKEN: ${{ secrets.SPLUNK_ACCESS_TOKEN }}
+        run: |
+          export KUBECONFIG=/tmp/kubeconfig
+          CLUSTER="${{ github.event.inputs.cluster }}"
+
+          if [ -z "$INTERSIGHT_API_KEY_ID" ] || [ -z "$INTERSIGHT_SECRET_KEY" ]; then
+            echo "⚠️ INTERSIGHT credentials not configured - skipping intersight-otel"
+            exit 0
+          fi
+
+          echo "Creating intersight-otel namespace if needed..."
+          oc create namespace intersight-otel --dry-run=client -o yaml | oc apply -f -
+
+          # Write PEM key to temp file (handles multiline correctly)
+          echo "$INTERSIGHT_SECRET_KEY" > /tmp/intersight.pem
+          chmod 600 /tmp/intersight.pem
+
+          echo "Injecting Intersight API credentials..."
+          oc -n intersight-otel create secret generic intersight-api-credentials \
+            --from-literal=intersight-key-id="$INTERSIGHT_API_KEY_ID" \
+            --from-file=intersight-key=/tmp/intersight.pem \
+            --dry-run=client -o yaml | oc apply -f -
+
+          rm -f /tmp/intersight.pem
+
+          if [ -n "$SPLUNK_ACCESS_TOKEN" ]; then
+            echo "Injecting Splunk credentials for intersight-otel..."
+            oc -n intersight-otel create secret generic splunk-credentials \
+              --from-literal=access-token="$SPLUNK_ACCESS_TOKEN" \
+              --dry-run=client -o yaml | oc apply -f -
+          fi
+
+          echo "✅ Intersight OTEL secrets injected for ${CLUSTER}"
+
+      - name: Inject Hubble Timescape Secrets
+        if: steps.sealed-secrets-check.outputs.sealed_secrets_active != 'true'
+        env:
+          HUBBLE_CLICKHOUSE_PASSWORD: ${{ secrets.HUBBLE_CLICKHOUSE_PASSWORD }}
+          HUBBLE_PUSH_API_PASSWORD: ${{ secrets.HUBBLE_PUSH_API_PASSWORD }}
+        run: |
+          export KUBECONFIG=/tmp/kubeconfig
+          CLUSTER="${{ github.event.inputs.cluster }}"
+
+          if [ -z "$HUBBLE_CLICKHOUSE_PASSWORD" ] || [ -z "$HUBBLE_PUSH_API_PASSWORD" ]; then
+            echo "⚠️ Hubble Timescape credentials not configured - skipping"
+            exit 0
+          fi
+
+          echo "Creating hubble-timescape namespace if needed..."
+          oc create namespace hubble-timescape --dry-run=client -o yaml | oc apply -f -
+
+          # ClickHouse credentials for all Timescape components
+          for component in ingester migrate server analyzer trimmer; do
+            echo "Injecting ClickHouse credentials for ${component}..."
+            oc -n hubble-timescape create secret generic hubble-timescape-${component}-creds \
+              --from-literal=CLICKHOUSE_PASSWORD="$HUBBLE_CLICKHOUSE_PASSWORD" \
+              --dry-run=client -o yaml | oc apply -f -
+          done
+
+          # Push API credentials for Vector -> Timescape communication
+          echo "Injecting Push API credentials..."
+          oc -n hubble-timescape create secret generic vector-push-credentials \
+            --from-literal=push-api-password="$HUBBLE_PUSH_API_PASSWORD" \
+            --dry-run=client -o yaml | oc apply -f -
+
+          echo "✅ Hubble Timescape secrets injected for ${CLUSTER}"
+
+      - name: Cleanup
+        if: always()
+        run: rm -rf /tmp/kubeconfig /tmp/kubeconfigs
+
+  refresh:
+    name: Refresh ArgoCD
+    needs: [sync, inject-secrets]
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && github.event.inputs.cluster != 'none' && needs.sync.result == 'success' }}
+    runs-on: [self-hosted, linux, saif-github-runner]
+    container:
+      image: ghcr.io/mahowlin/github-actions-container:${{ vars.CONTAINER_TAG }}
+    steps:
+      - name: Fetch kubeconfig from repo
+        env:
+          KUBECONFIG_REPO_TOKEN: ${{ secrets.KUBECONFIG_REPO_TOKEN }}
+        run: |
+          if [ -z "$KUBECONFIG_REPO_TOKEN" ]; then
+            echo "❌ KUBECONFIG_REPO_TOKEN not configured"
+            exit 1
+          fi
+
+          CLUSTER="${{ github.event.inputs.cluster }}"
+
+          echo "Fetching kubeconfig from kubeconfig storage repo..."
+          git clone --depth 1 --branch main \
+            # Configure this URL for your kubeconfig storage repository
+            "https://x-access-token:${KUBECONFIG_REPO_TOKEN}@github.com/mahowlin/saif-kubeconfigs.git" \
+            /tmp/kubeconfigs
+
+          cp "/tmp/kubeconfigs/kubeconfig-${CLUSTER}" /tmp/kubeconfig
+          chmod 600 /tmp/kubeconfig
+
+          # Transform localhost tunnel URL to direct API endpoint for CI/CD
+          # Repo kubeconfigs use SSH tunnel (localhost:port), runner uses direct access
+          sed -i "s|server: https://localhost:[0-9]*|server: https://api.${CLUSTER}.example.com:6443|g" /tmp/kubeconfig
+
+          echo "✅ Kubeconfig retrieved and transformed for ${CLUSTER}"
+
+      - name: Trigger ArgoCD Refresh
+        run: |
+          export KUBECONFIG=/tmp/kubeconfig
+
+          echo "=== Refreshing ArgoCD on ${{ github.event.inputs.cluster }} ==="
+
+          # Trigger hard refresh on saif-apps
+          oc -n openshift-gitops patch application saif-apps \
+            --type merge \
+            --patch '{"metadata":{"annotations":{"argocd.argoproj.io/refresh":"hard"}}}'
+
+          # Wait for refresh
+          sleep 10
+
+          # Show status
+          echo ""
+          echo "=== ArgoCD Applications ==="
+          oc get applications -n openshift-gitops
+
+          # Clean up
+          rm -rf /tmp/kubeconfig /tmp/kubeconfigs
+        env:
+          KUBECONFIG: /tmp/kubeconfig

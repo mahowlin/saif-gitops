@@ -1,0 +1,83 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+# Model Download Job - Downloads LLaMA 3.1 70B AWQ from local webserver
+# Runs automatically after ArgoCD syncs nim-llm app (PostSync hook)
+# Much faster than NGC download (local network vs internet)
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: model-download
+  namespace: nim-llm
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: OnFailure
+      # Let OpenShift assign UID from namespace range
+      containers:
+      - name: downloader
+        image: registry.example.com:5000/openshift4/ose-tools-rhel9:latest
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+          MODEL_DIR="/model-store/llama-3.1-70b-awq-int4"
+          WEBSERVER="http://10.0.0.10/nim-cache/llama-3.1-70b-awq-int4"
+
+          # Check if model already exists
+          if [ -f "$MODEL_DIR/model-00001-of-00009.safetensors" ]; then
+            echo "Model already exists at $MODEL_DIR, skipping download"
+            ls -la "$MODEL_DIR"
+            exit 0
+          fi
+
+          echo "Downloading model from webserver..."
+          mkdir -p "$MODEL_DIR"
+          cd "$MODEL_DIR"
+
+          # Download all model files
+          FILES="
+            config.json
+            generation_config.json
+            model-00001-of-00009.safetensors
+            model-00002-of-00009.safetensors
+            model-00003-of-00009.safetensors
+            model-00004-of-00009.safetensors
+            model-00005-of-00009.safetensors
+            model-00006-of-00009.safetensors
+            model-00007-of-00009.safetensors
+            model-00008-of-00009.safetensors
+            model-00009-of-00009.safetensors
+            model.safetensors.index.json
+            special_tokens_map.json
+            tokenizer.json
+            tokenizer_config.json
+          "
+
+          for FILE in $FILES; do
+            echo "Downloading $FILE..."
+            curl -u "admin:Cisco-123" -f -o "$FILE" "$WEBSERVER/$FILE"
+          done
+
+          echo "Download complete!"
+          ls -la "$MODEL_DIR"
+        volumeMounts:
+        - name: model-store
+          mountPath: /model-store
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+      volumes:
+      - name: model-store
+        persistentVolumeClaim:
+          claimName: nim-cache-pvc

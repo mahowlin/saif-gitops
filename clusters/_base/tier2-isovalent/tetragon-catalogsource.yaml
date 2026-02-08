@@ -1,0 +1,25 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+# Tetragon CatalogSource - prerequisite for Tetragon operator
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: tetragon-catalogsource
+  namespace: openshift-gitops
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"  # Apply before other apps
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/mahowlin/saif-gitops.git
+    targetRevision: main
+    path: apps/tetragon-catalogsource
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: openshift-marketplace
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true

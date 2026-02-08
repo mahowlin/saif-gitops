@@ -1,0 +1,52 @@
+{{- if and .Values.clickhouse.cluster.enabled .Values.clickhouse.cluster.prometheus.serviceMonitor.enabled }}
+{{- $tls := merge dict .Values.clickhouse.tls .Values.tls -}}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: hubble-timescape-clickhouse-hubble-data
+  namespace: {{ .Values.clickhouse.cluster.prometheus.serviceMonitor.namespace | default .Release.Namespace }}
+  labels:
+    {{- include "hubble-timescape-clickhouse.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      metrics-service: 'true'
+      {{- if (and .Values.lite.enabled .Values.lite.clickhouse.enabled) }}
+      {{ include "hubble-timescape-lite.selectorLabels" . | nindent 6 }}
+      {{- else }}
+      {{- include "hubble-timescape-clickhouse.labels" . | nindent 6 }}
+      {{- end }}
+  namespaceSelector:
+    matchNames:
+    - {{ .Release.Namespace }}
+  endpoints:
+  - port: metrics
+    interval: 30s
+    honorLabels: true
+    path: /metrics
+  {{- with $tableMetrics := .Values.clickhouse.cluster.prometheus.tableMetrics }}
+  {{- if $tableMetrics.enabled }}
+  - port: {{ ternary "https" "http" $tls.enabled }}
+    scheme: {{ ternary "https" "http" $tls.enabled }}
+    basicAuth:
+      username:
+        name: {{ $tableMetrics.credentials.secretName }}
+        key: CLICKHOUSE_USERNAME
+      password:
+        name: {{ $tableMetrics.credentials.secretName }}
+        key: CLICKHOUSE_PASSWORD
+    tlsConfig:
+      {{- if $tls.ca.configMap.name }}
+      ca:
+        configMap:
+          name: {{ $tls.ca.configMap.name }}
+          key: ca.crt
+      {{- end }}
+      serverName: clickhouse-hubble-timescape
+    interval: 15s
+    honorLabels: true
+    # see config.d/tablemetrics.xml where we define custom http_handlers
+    path: /isovalent/metrics/table
+  {{- end }}
+  {{- end }}
+{{- end }}

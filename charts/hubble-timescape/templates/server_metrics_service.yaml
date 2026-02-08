@@ -1,0 +1,22 @@
+{{- if and .Values.server.enabled .Values.server.prometheus.enabled  (not .Values.lite.enabled) }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "hubble-timescape-server.name" . }}-metrics
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hubble-timescape-server.labels" . | nindent 4 }}
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: {{ .Values.server.prometheus.port | quote }}
+spec:
+  clusterIP: None
+  type: ClusterIP
+  ports:
+  - name: metrics
+    port: {{ .Values.server.prometheus.port }}
+    targetPort: server-metrics
+    protocol: TCP
+  selector:
+    {{- include "hubble-timescape-server.selectorLabels" . | nindent 6 }}
+{{- end }}

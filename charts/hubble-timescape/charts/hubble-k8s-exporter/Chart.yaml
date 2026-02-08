@@ -1,0 +1,5 @@
+apiVersion: v2
+appVersion: 0.0.0
+description: Exporter for Kubernetes objects create/update/delete events
+name: hubble-k8s-exporter
+version: 0.0.0

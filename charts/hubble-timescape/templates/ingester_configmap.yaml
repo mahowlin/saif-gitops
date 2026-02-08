@@ -1,0 +1,110 @@
+{{- if and .Values.ingester.enabled (not .Values.lite.enabled) }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "hubble-timescape-ingester.name" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hubble-timescape-ingester.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    log-level: {{ .Values.ingester.logLevel | default .Values.logLevel }}
+    {{- if .Values.ingester.prometheus.enabled }}
+    prometheus-serve-addr: ":{{ .Values.ingester.prometheus.port }}"
+    {{- end }}
+    pprof: {{ .Values.ingester.pprof.enabled }}
+    pprof-address: {{ .Values.ingester.pprof.address | quote }}
+    pprof-port: {{ .Values.ingester.pprof.port }}
+    gops: {{ .Values.ingester.gops.enabled }}
+    gops-port: {{ .Values.ingester.gops.port }}
+    {{- $clickhouse := merge dict .Values.ingester.clickhouse .Values.clickhouse (dict "tls" .Values.tls)}}
+    {{- if (include "hubble-timescape.clickhouse-has-custom-ca" $clickhouse) }}
+    tls-clickhouse-ca-files: "/var/lib/hubble-timescape/clickhouse-certs/clickhouse-ca.crt"
+    {{- end }}
+    flows-ttl: {{ include "hubble-timescape.flows.ttl" . }}
+    k8s-ttl: {{ include "hubble-timescape.k8s.ttl" . }}
+    assessment-reports-ttl: {{ include "hubble-timescape.assessment-reports.ttl" . }}
+    connection-logs-ttl: {{ include "hubble-timescape.connection-logs.ttl" . }}
+    connection-logs-hourly-rollup-age: {{ include "hubble-timescape.connection-logs.hourlyRollupAge" . }}
+    connection-logs-daily-rollup-age: {{ include "hubble-timescape.connection-logs.dailyRollupAge" . }}
+    health-listen-address: ":{{ .Values.ingester.healthCheckPort }}"
+    {{- include "hubble-timescape-ingester.config" . | nindent 4}}
+    {{- include "hubble-timescape-tracing.config" .Values.ingester | nindent 4}}
+{{- end }}
+
+{{- define "hubble-timescape-ingester.config" -}}
+{{- $tls := merge dict .Values.ingester.server.tls .Values.tls -}}
+batch-size: {{ .Values.ingester.batchSize }}
+list-objects-timeout: {{ .Values.ingester.listObjectsTimeout }}
+list-objects-max-lookback: {{ .Values.ingester.listObjectsMaxLookback }}
+bucket-uri: {{ .Values.ingester.bucket.uri | quote }}
+buckets: {{ .Values.config.buckets | toYaml | nindent 2 }}
+{{- if .Values.ingester.bucket.tls.ca.configMap.name }}
+s3-api-ca-files: "/var/lib/hubble-timescape/bucket-certs/bucket-ca.crt"
+{{- end }}
+bucket-pattern: {{ .Values.ingester.bucket.prefixPattern | quote }}
+cluster-name: {{ .Values.ingester.bucket.clusterName | quote }}
+enable-flows-ingestion: {{ .Values.ingester.flows.enabled }}
+flows-pattern: {{ .Values.ingester.flows.pattern | quote }}
+enable-k8s-events-ingestion: {{ .Values.ingester.k8s.enabled }}
+k8s-pattern: {{ .Values.ingester.k8s.pattern | quote }}
+enable-system-status-ingestion: {{ .Values.ingester.systemStatus.enabled }}
+system-status-pattern: {{ .Values.ingester.systemStatus.pattern | quote }}
+enable-connection-logs-ingestion: {{ .Values.ingester.connectionLogs.enabled }}
+connection-logs-pattern: {{ .Values.ingester.connectionLogs.pattern | quote }}
+report-interval: {{ .Values.ingester.reportInterval }}
+schedule-interval: {{ .Values.ingester.scheduleInterval }}
+delete-after-ingest: {{ .Values.ingester.deleteAfterIngest | quote }}
+max-allowed-ingest-errors: {{ .Values.ingester.maxAllowedIngestErrors | quote }}
+{{- if eq (include "hubble-timescape-ingester.server.http.enabled" .) "true" }}
+enable-push-api: true
+{{- if and $tls.enabled }}
+push-api-tls-enabled: true
+push-api-tls-cert-file: /var/lib/hubble-timescape/tls/push-server.crt
+push-api-tls-key-file: /var/lib/hubble-timescape/tls/push-server.key
+{{- if and (eq .Values.ingester.server.authMethod "mtls") .Values.ingester.server.tls.clientCA.configMap.name }}
+push-api-tls-client-ca-files: /var/lib/hubble-timescape/tls/push-server-client-ca.crt
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if eq (include "hubble-timescape-ingester.server.grpc.enabled" .) "true" }}
+enable-stream-api: true
+stream-api-flush-interval: {{ .Values.ingester.server.grpc.flushInterval | quote }}
+{{- if and $tls.enabled }}
+stream-api-tls-enabled: true
+stream-api-tls-cert-file: /var/lib/hubble-timescape/tls/push-server.crt
+stream-api-tls-key-file: /var/lib/hubble-timescape/tls/push-server.key
+{{- if and (eq .Values.ingester.server.authMethod "mtls") .Values.ingester.server.tls.clientCA.configMap.name }}
+stream-api-tls-client-ca-files: /var/lib/hubble-timescape/tls/push-server-client-ca.crt
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if or .Values.lite.enabled .Values.ingester.k8sImporter.enabled }}
+enable-k8s-importer: true
+k8s-importer-cluster-name: {{ .Values.ingester.k8sImporter.clusterName | quote }}
+k8s-importer-flush-interval: {{ .Values.ingester.k8sImporter.flushInterval | quote }}
+k8s-importer-cilium-network-policies: {{ .Values.ingester.k8sImporter.ciliumNetworkPolicies | quote }}
+k8s-importer-k8s-network-policies: {{ .Values.ingester.k8sImporter.k8sNetworkPolicies | quote }}
+k8s-importer-k8s-endpoints: {{ .Values.ingester.k8sImporter.k8sEndpoints | quote }}
+k8s-importer-cilium-endpoints: {{ .Values.ingester.k8sImporter.ciliumEndpoints | quote }}
+k8s-importer-cilium-identities: {{ .Values.ingester.k8sImporter.ciliumIdentities | quote }}
+k8s-importer-tetragon-network-policies: {{ .Values.ingester.k8sImporter.tetragonNetworkPolicies | quote }}
+k8s-importer-cilium-nodes: {{ .Values.ingester.k8sImporter.ciliumNodes | quote }}
+k8s-importer-tetragon-nodes: {{ .Values.ingester.k8sImporter.tetragonNodes | quote }}
+k8s-importer-smart-switches: {{ .Values.ingester.k8sImporter.smartSwitches | quote }}
+k8s-importer-smart-switch-network-policies: {{ .Values.ingester.k8sImporter.smartSwitchNetworkPolicies | quote }}
+{{- end }}
+{{- if or (eq (include "hubble-timescape-ingester.server.http.enabled" .) "true") (eq (include "hubble-timescape-ingester.server.grpc.enabled" .) "true") }}
+async-insert-disabled: {{ not .Values.ingester.asyncInsert.enabled | quote }}
+async-insert-busy-timeout: {{ .Values.ingester.asyncInsert.busyTimeout }}
+async-insert-max-data-size: {{ .Values.ingester.asyncInsert.maxDataSize | int }}
+{{- end }}
+filter-batch-size: {{ .Values.ingester.filterBatchSize }}
+filter-batch-window: {{ .Values.ingester.filterBatchWindow }}
+{{- with .Values.ingester.logInvalidLines }}
+log-invalid-lines: {{ . }}
+{{- end }}
+disable-default-ingest-patterns: {{ .Values.ingester.disableDefaultIngestPatterns }}
+disable-file-must-match-ingest-pattern: {{ .Values.ingester.disableFileMustMatchIngestPattern }}
+{{- end }}

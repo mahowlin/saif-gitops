@@ -1,0 +1,19 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+# Tetragon Enterprise CatalogSource
+# Must exist before Tetragon Subscription can install the operator
+apiVersion: operators.coreos.com/v1alpha1
+kind: CatalogSource
+metadata:
+  name: tetragon-operators
+  namespace: openshift-marketplace
+spec:
+  sourceType: grpc
+  image: registry.example.com:5000/isovalent/tetragon-operator-index:v0.0.1
+  displayName: Tetragon Enterprise
+  publisher: Isovalent (local mirror)
+  updateStrategy:
+    registryPoll:
+      interval: 30m

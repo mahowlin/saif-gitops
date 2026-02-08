@@ -1,0 +1,18 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+{{- if .Values.ipPool.enabled }}
+# CiliumLoadBalancerIPPool - IP range for LoadBalancer services
+apiVersion: cilium.io/v2alpha1
+kind: CiliumLoadBalancerIPPool
+metadata:
+  name: {{ .Values.ipPool.name | default (printf "%s-lb-pool" .Values.clusterName) }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  blocks:
+    - start: {{ required "ipPool.start is required when ipPool.enabled=true" .Values.ipPool.start | quote }}
+      stop: {{ required "ipPool.stop is required when ipPool.enabled=true" .Values.ipPool.stop | quote }}
+{{- end }}

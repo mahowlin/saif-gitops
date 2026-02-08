@@ -1,0 +1,30 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+# Splunk Dashboard Updater - Updates Text charts in Splunk O11y dashboard
+# Runs every 5 minutes to refresh data from cluster
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: splunk-reporter
+  namespace: openshift-gitops
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"  # After splunk-otel
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/mahowlin/saif-gitops.git
+    targetRevision: main
+    path: apps/splunk-reporter
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: splunk-reporter
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

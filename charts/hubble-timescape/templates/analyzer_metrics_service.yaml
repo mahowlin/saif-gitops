@@ -1,0 +1,22 @@
+{{- if and .Values.analyzer.enabled .Values.analyzer.prometheus.enabled (not .Values.lite.enabled) }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "hubble-timescape-analyzer.name" . }}-metrics
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hubble-timescape-analyzer.labels" . | nindent 4 }}
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "{{ include "hubble-timescape-analyzer.prometheus.port" . }}"
+spec:
+  clusterIP: None
+  type: ClusterIP
+  ports:
+  - name: metrics
+    port: {{ include "hubble-timescape-analyzer.prometheus.port" . }}
+    targetPort: analyze-metrics
+    protocol: TCP
+  selector:
+    {{- include "hubble-timescape-analyzer.selectorLabels" . | nindent 6 }}
+{{- end }}

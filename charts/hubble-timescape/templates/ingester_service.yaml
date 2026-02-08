@@ -1,0 +1,22 @@
+{{- if .Values.ingester.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "hubble-timescape-ingester.service.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hubble-timescape-ingester.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.ingester.service.type }}
+  ports:
+    - protocol: TCP
+      name: push
+      targetPort: push
+      port: {{ include "hubble-timescape-ingester.service.push.port" . }}
+    - protocol: TCP
+      name: stream
+      targetPort: stream
+      port: {{ include "hubble-timescape-ingester.service.stream.port" . }}
+  selector:
+    {{- include "hubble-timescape-ingester.selectorLabels" . | nindent 4 }}
+{{- end }}

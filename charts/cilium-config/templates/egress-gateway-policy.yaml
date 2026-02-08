@@ -1,0 +1,28 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+{{- if .Values.egressGateway.enabled }}
+# CiliumEgressGatewayPolicy - Source NAT for outbound traffic
+apiVersion: cilium.io/v2
+kind: CiliumEgressGatewayPolicy
+metadata:
+  name: {{ .Values.clusterName }}-egress-policy
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  selectors:
+    - podSelector: {}
+  destinationCIDRs:
+    {{- range .Values.egressGateway.destinationCIDRs }}
+    - {{ . | quote }}
+    {{- end }}
+  egressGateway:
+    {{- if .Values.egressGateway.nodeSelector }}
+    nodeSelector:
+      matchLabels:
+        {{- toYaml .Values.egressGateway.nodeSelector | nindent 8 }}
+    {{- end }}
+    egressIP: {{ .Values.egressGateway.egressIP | quote }}
+{{- end }}

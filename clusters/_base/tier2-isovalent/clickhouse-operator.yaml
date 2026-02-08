@@ -1,0 +1,67 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+# Altinity ClickHouse Operator - Required for Hubble Timescape
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: clickhouse-operator
+  namespace: openshift-gitops
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/mahowlin/saif-gitops.git
+    targetRevision: main
+    path: charts/altinity-clickhouse-operator
+    helm:
+      values: |
+        operator:
+          # Watch hubble-timescape namespace for CHI resources
+          env:
+            - name: WATCH_NAMESPACES
+              value: "hubble-timescape"
+          image:
+            repository: registry.example.com:5000/altinity/clickhouse-operator
+            tag: "0.25.4"
+        metrics:
+          image:
+            repository: registry.example.com:5000/altinity/metrics-exporter
+            tag: "0.25.4"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: clickhouse-operator
+  ignoreDifferences:
+    # Ignore fields mutated by operators and Kubernetes controllers
+    - group: apps
+      kind: Deployment
+      name: clickhouse-operator-altinity-clickhouse-operator
+      namespace: clickhouse-operator
+      # Ignore all fields managed by these controllers (SSA field ownership)
+      managedFieldsManagers:
+        - clickhouse-operator
+        - kube-controller-manager
+      jsonPointers:
+        # Top-level metadata mutated at runtime
+        - /metadata/labels
+        - /metadata/annotations
+        # Pod template metadata (admission controllers, operators mutate these)
+        - /spec/template/metadata/labels
+        - /spec/template/metadata/annotations
+        # Kubernetes-defaulted spec fields
+        - /spec/revisionHistoryLimit
+        - /spec/progressDeadlineSeconds
+        - /spec/strategy/rollingUpdate
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      # ServerSideApply disabled - causes SSA structured-merge diffs with operator-mutated fields
+      # - ServerSideApply=true
+      - RespectIgnoreDifferences=true

@@ -1,0 +1,4 @@
+clusterName: fake-cluster
+splunkObservability:
+  realm: fake-realm
+  accessToken: fake-token

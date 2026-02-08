@@ -1,0 +1,65 @@
+clickhouse:
+  cluster:
+    enabled: true
+    volumes:
+      data:
+        size: 1Ti
+server:
+  extraEnv:
+    - name: HOST_IP
+      valueFrom:
+        fieldRef:
+          fieldPath: status.hostIP
+    - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+      value: "http://$(HOST_IP):4317"
+  tracing:
+    enabled: true
+    sampling:
+      spanMatcherSampler:
+        matchers:
+        - matcher:
+            name:
+              exact: "Query"
+          ratio: 1.0
+        - matcher:
+            name:
+              exact: "Query"
+            attributes:
+              query_name:
+                exact: "GetFlows"
+          ratio: 0.5
+    otlp:
+      enabled: true
+      transport: grpc
+      tls:
+        enabled: false
+
+ingester:
+  extraEnv:
+    - name: HOST_IP
+      valueFrom:
+        fieldRef:
+          fieldPath: status.hostIP
+    - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+      value: "http://$(HOST_IP):4317"
+  tracing:
+    enabled: true
+    sampling:
+      spanMatcherSampler:
+        matchers:
+        - matcher:
+            name:
+              exact: "Exec"
+          ratio: 0.5
+        - matcher:
+            name:
+              exact: "Exec"
+            attributes:
+              query_name:
+                regex: ".*Inserter"
+          ratio: 0.1
+    otlp:
+      enabled: true
+      transport: grpc
+      tls:
+        enabled: false

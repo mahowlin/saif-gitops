@@ -1,0 +1,213 @@
+lite:
+  image:
+    repository: internal-proxy.example.com/isovalent/hubble-timescape
+    tag: "v1.33.7"
+    pullPolicy: Always
+    pullSecrets:
+      - name: internal-lite-proxy-secret
+  enabled: true
+  extraVolumes:
+    - name: lite-config
+      configMap:
+        name: config
+        items:
+        - key: config.yaml
+          path: lite-config.yaml
+  extraVolumeMounts:
+    - mountPath: /etc/configs
+      name: lite-config
+      readOnly: true
+
+  podAnnotations:
+    foo:  bar
+
+  podLabels:
+    customLabel: customValue
+
+  prometheus:
+    serviceMonitor:
+      enabled: true
+      scrapeInterval: 18s
+      labels:
+        test: foo
+      annotations:
+        test: bar
+  clickhouse:
+    extraVolumes:
+      - name: clickhouse-config
+        configMap:
+          name: config
+          items:
+          - key: config.yaml
+            path: clickhouse-config.yaml
+    extraVolumeMounts:
+      - mountPath: /etc/configs
+        name: clickhouse-config
+        readOnly: true
+    prometheus:
+      serviceMonitor:
+        enabled: true
+        labels:
+          test: label
+        annotations:
+          test: annotation
+        scrapeInterval: 12s
+      prometheusRule:
+        enabled: true
+      tableMetrics:
+        enabled: true
+
+ingester:
+  extraEnv:
+    - name: FOO
+      value: BAR
+  prometheus:
+    prometheusRule:
+      enabled: true
+      labels:
+        test: ingest
+      annotations:
+        test: foo
+      rules:
+        TimescapeEventDataStale:
+          gracePeriod: 10m
+        TimescapeIngestionDurationHigh:
+          gracePeriod: 9m
+  server:
+    authMethod: mtls
+    http:
+      enabled: true
+    grpc:
+      enabled: true
+    tls:
+      clientCA:
+        configMap:
+          name: selfsigned-ca-bundle
+          key: "ca.crt"
+  k8sImporter:
+    clusterName: my-cluster
+    flushInterval: "5s"
+    ciliumNetworkPolicies: true
+    k8sNetworkPolicies: true
+    k8sEndpoints: true
+    ciliumEndpoints: true
+    ciliumIdentities: true
+    tetragonNetworkPolicies: true
+    ciliumNodes: true
+    tetragonNodes: true
+    smartSwitches: true
+    smartSwitchNetworkPolicies: true
+server:
+  extraEnv:
+    - name: FOO
+      value: BAR
+  prometheus:
+    prometheusRule:
+      enabled: true
+  rbac:
+    enabled: true
+    oidcURL: https://dex.172-18-0-2.sslip.io
+    oidcClientID: hubble,grafana
+    oidcCA:
+      configMap:
+        name: selfsigned-ca-bundle
+        key: "ca.crt"
+    policy:
+      logRoles: true
+      mode: configMap
+      configMap:
+        bindings:
+        # For okta
+        - role: admin
+          scope: hubble-rbac
+          value: 'Everyone'
+        # For dex
+        - role: admin
+          scope: email
+          value: 'admin@example.com'
+        - role: demos
+          scope: email
+          value: 'demo@example.com'
+        roles:
+        - name: demos
+          rules:
+            - actions:
+                - get
+              contexts:
+                - field: namespace
+                  values:
+                    - kube-system
+                    - tenant-jobs
+              kind: flows
+        - name: admin
+          rules:
+            - actions:
+                - "*"
+              kind: "*"
+              allowAllContexts: true
+
+tls:
+  enabled: true
+  auto:
+    enabled: true
+    method: certmanager
+    certmanager:
+      issuerRef:
+        group: cert-manager.io
+        kind: ClusterIssuer
+        name: selfsigned-ca-issuer
+ui:
+  image:
+    override: ~
+    repository: quay.io/isovalent/hubble-timescape-ui
+    tag: "v1.33.7-ui"
+    pullPolicy: Never
+    pullSecrets:
+      - name: internal-ui-proxy-secret
+  extraEnv:
+    - name: FOO
+      value: BAR
+  loadBalancing:
+    enabled: true
+    clusterRole:
+      labels:
+        test: my-label
+      annotations:
+        test: my-annotation
+    clusterRoleBinding:
+      labels:
+        test: my-label
+      annotations:
+        test: my-annotation
+  ingress:
+    enabled: true
+    tls:
+      enabled: true
+      secretName: hubble-timescape-ui-ingress-cert
+  extraVolumes:
+    - name: ui-config
+      configMap:
+        name: config
+        items:
+        - key: config.yaml
+          path: ui-config.yaml
+  extraVolumeMounts:
+    - mountPath: /etc/configs
+      name: ui-config
+      readOnly: true
+  tls:
+    caBundle:
+      enabled: true
+      name: selfsigned-ca-bundle-override
+
+clickhouse:
+  cluster:
+    image:
+      override: ~
+      repository: internal-proxy.example.com/clickhouse/clickhouse-server
+      # use skopeo inspect to get the multiarch manifest list digest
+      # skopeo inspect docker://clickhouse/clickhouse-server:YOUR_TAG | jq -r .Digest
+      tag: 42.1.14.39-alpine@sha256:b002e56ed5c16e224c312527f6fcba7e77216fec5d7a88a7828f59efc614feb5
+      pullPolicy: Always
+      pullSecrets:
+        - name: internal-ch-proxy-secret

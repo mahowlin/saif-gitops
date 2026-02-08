@@ -1,0 +1,37 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+# NFD Instance - Creates NodeFeatureDiscovery CR after operator installs CRD
+# Sync wave 0 ensures it runs after nfd-operator (-3)
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: nfd-instance
+  namespace: openshift-gitops
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"  # After nfd-operator installs CRD
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/mahowlin/saif-gitops.git
+    targetRevision: main
+    path: apps/nfd-instance
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: openshift-nfd
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+      - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 10
+      backoff:
+        duration: 60s
+        factor: 2
+        maxDuration: 10m

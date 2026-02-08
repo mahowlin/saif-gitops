@@ -1,0 +1,35 @@
+{{- if .Values.ui.ingress.enabled -}}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "hubble-timescape-ui.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hubble-timescape-ui.labels" . | nindent 4 }}
+{{- with .Values.ui.ingress.annotations }}
+  annotations:
+{{ toYaml . | indent 4 }}
+{{- end }}
+spec:
+  {{- if .Values.ui.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ui.ingress.host }}
+      secretName: {{ .Values.ui.ingress.tls.secretName }}
+  {{- end }}
+  {{- if .Values.ui.ingress.ingressClassName }}
+  ingressClassName: {{ .Values.ui.ingress.ingressClassName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ui.ingress.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "hubble-timescape-ui.service.name" . }}
+                port:
+                  number: {{ include "hubble-timescape-ui.service.port" . }}
+{{- end }}

@@ -1,0 +1,9 @@
+# Cilium Day 2 Configuration Chart
+# Manages runtime Cilium resources: L2 announcements, IP pools, BGP policies
+# CiliumConfig (CNI bootstrap) remains in Day 1 (saif-ai-pod)
+apiVersion: v2
+name: cilium-config
+description: Platform-level Cilium configuration for LoadBalancer IP pools and L2 announcements
+type: application
+version: 1.0.0
+appVersion: "1.18"

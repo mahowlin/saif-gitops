@@ -1,0 +1,16 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+# LVMS (LVM Storage) Operator namespace
+# Standard namespace for storage operators in OpenShift
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openshift-storage
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+  labels:
+    app.kubernetes.io/name: lvms-operator
+    app.kubernetes.io/managed-by: argocd
+    openshift.io/cluster-monitoring: "true"

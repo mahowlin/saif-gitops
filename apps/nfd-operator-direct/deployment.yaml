@@ -1,0 +1,96 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+# NFD Operator Deployment
+# Direct deployment bypassing OLM to avoid seccomp annotation bug (K8s 1.32)
+# Based on nfd.4.19.0-202601120612 CSV
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nfd-controller-manager
+  namespace: openshift-nfd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  labels:
+    control-plane: controller-manager
+    app.kubernetes.io/name: nfd-operator
+    app.kubernetes.io/managed-by: argocd
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      control-plane: controller-manager
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+  template:
+    metadata:
+      labels:
+        control-plane: controller-manager
+    spec:
+      # Pod-level seccompProfile - required for K8s 1.27+
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      serviceAccountName: nfd-manager
+      terminationGracePeriodSeconds: 10
+      containers:
+        - name: manager
+          # Image resolved via IDMS: registry.redhat.io/openshift4 -> registry.example.com:5000/openshift4
+          image: registry.redhat.io/openshift4/ose-cluster-nfd-rhel9-operator@sha256:fbbef6a0a8e5ad294506701bf70bd8bb6dff14253dbc722e1dbacf1766602bd5
+          command:
+            - /node-feature-discovery-operator
+          args:
+            - --metrics-bind-address=127.0.0.1:8080
+            - --leader-elect
+          env:
+            - name: SSL_CERT_DIR
+              value: /etc/pki/tls/certs
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: OPERATOR_NAME
+              value: cluster-nfd-operator
+            - name: NODE_FEATURE_DISCOVERY_IMAGE
+              # Image resolved via IDMS
+              value: registry.redhat.io/openshift4/ose-node-feature-discovery-rhel9@sha256:5af2932962f77dd2254e1cf50d70c8b8e85625568badd5c550168c2a65f4f636
+          ports:
+            - name: metrics
+              containerPort: 8080
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8081
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault

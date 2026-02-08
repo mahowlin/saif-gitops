@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "hubble-k8s-exporter.fullname" . }}
+  labels:
+    {{- include "hubble-k8s-exporter.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    log-level: {{ .Values.logLevel }}
+    cluster-name: {{ .Values.export.clusterName | quote }}
+    cilium-network-policies: {{ .Values.export.ciliumNetworkPolicies | quote }}
+    k8s-network-policies: {{ .Values.export.k8sNetworkPolicies | quote }}
+    k8s-endpoints: {{ .Values.export.k8sEndpoints | quote }}
+    cilium-endpoints: {{ .Values.export.ciliumEndpoints | quote }}
+    cilium-identities: {{ .Values.export.ciliumIdentities | quote }}
+    tetragon-network-policies: {{ .Values.export.tetragonNetworkPolicies | quote }}
+    tetragon-nodes: {{ .Values.export.tetragonNodes | quote }}
+    smart-switches: {{ .Values.export.smartSwitches | quote }}
+    smart-switch-network-policies: {{ .Values.export.smartSwitchNetworkPolicies | quote }}
+    cilium-nodes: {{ .Values.export.ciliumNodes | quote }}
+    file-compression: {{ .Values.export.fileCompression | quote }}
+    file-path: {{ .Values.export.filePath | quote }}
+    file-rotation-interval: {{ .Values.export.fileRotationInterval | quote }}
+    file-max-backup: {{ .Values.export.maxFileBackups | quote }}
+    file-max-size: {{ .Values.export.maxFileSize | quote }}

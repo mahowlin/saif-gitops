@@ -1,0 +1,114 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+# Intersight OTEL Collector configuration
+# Polls Intersight API for UCS metrics
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: intersight-otel-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: intersight-otel
+data:
+  intersight-otel.toml: |
+    otel_collector_endpoint = "http://127.0.0.1:4317"
+
+    # Compute Blade count (for dashboard)
+    [[pollers]]
+    name = "intersight.compute.blade.count"
+    api_query = "api/v1/compute/Blades?$count=true"
+    aggregator = "result_count"
+    interval = 60
+
+    # Chassis count
+    [[pollers]]
+    name = "intersight.equipment.chassis.count"
+    api_query = "api/v1/equipment/Chasses?$count=true"
+    aggregator = "result_count"
+    interval = 60
+
+    # Critical Alarms
+    [[pollers]]
+    name = "intersight.alarms.count"
+    otel_attributes = { severity = "critical" }
+    api_query = "api/v1/cond/Alarms?$filter=Acknowledge eq 'None' and Severity eq 'Critical'&$count=true"
+    aggregator = "result_count"
+    interval = 60
+
+    # Warning Alarms
+    [[pollers]]
+    name = "intersight.alarms.count"
+    otel_attributes = { severity = "warning" }
+    api_query = "api/v1/cond/Alarms?$filter=Acknowledge eq 'None' and Severity eq 'Warning'&$count=true"
+    aggregator = "result_count"
+    interval = 60
+
+    # Server specs - Model, CPU cores, Memory (string attributes)
+    # Filtered by bladeSerial to get the correct blade for this cluster
+    [[pollers]]
+    name = "intersight.compute.blade.info"
+    api_query = "api/v1/compute/Blades?$filter=Serial eq '{{ .Values.bladeSerial }}'&$select=Model,Serial,NumCpuCores,TotalMemory"
+    aggregator = "first_result_field"
+    aggregator_options = { fields = "Model,Serial,NumCpuCores,TotalMemory" }
+    otel_attributes = { "intersight.cluster" = {{ .Values.clusterName | quote }} }
+    interval = 300
+
+    # Memory in GB (numeric value for Splunk Single Value chart)
+    # TotalMemory from Intersight is in MB, divide by 1024 to get GB
+    [[pollers]]
+    name = "intersight.compute.blade.memory_gb"
+    api_query = "api/v1/compute/Blades?$filter=Serial eq '{{ .Values.bladeSerial }}'&$select=TotalMemory"
+    aggregator = "first_result_numeric"
+    aggregator_options = { field = "TotalMemory", divisor = "1024" }
+    otel_attributes = { "intersight.cluster" = {{ .Values.clusterName | quote }} }
+    interval = 300
+
+    # CPU cores (numeric value for Splunk Single Value chart)
+    [[pollers]]
+    name = "intersight.compute.blade.cpu_cores"
+    api_query = "api/v1/compute/Blades?$filter=Serial eq '{{ .Values.bladeSerial }}'&$select=NumCpuCores"
+    aggregator = "first_result_numeric"
+    aggregator_options = { field = "NumCpuCores", divisor = "1" }
+    otel_attributes = { "intersight.cluster" = {{ .Values.clusterName | quote }} }
+    interval = 300
+
+    # UCS Host Power
+    [[tspollers]]
+    name = "ucs_host_power"
+    datasource = "PhysicalEntities"
+    dimensions = ["name"]
+    filter = { type = "and", fields = [{type = "selector", dimension = "instrument.name", value = "hw.host"}]}
+    aggregations = [{type = "longSum", name = "count", fieldName = "hw.host.power_count"}, {type = "doubleSum", name = "hw.host.power-Sum", fieldName = "hw.host.power"}]
+    post_aggregations = [{"type" = "expression", "name" = "intersight.ucs.host.power", "expression" = "(\"hw.host.power-Sum\" / \"count\")"}]
+    field_names = ["intersight.ucs.host.power"]
+    otel_dimension_to_attribute_map = { "name" = "intersight.name" }
+    otel_attributes = { "intersight.cluster" = {{ .Values.clusterName | quote }} }
+    interval = 60
+
+    # UCS Host Temperature
+    [[tspollers]]
+    name = "ucs_host_temperature"
+    datasource = "PhysicalEntities"
+    dimensions = ["host.name"]
+    filter = { type = "and", fields = [{type = "selector", dimension = "instrument.name", value = "hw.temperature"}, {type = "selector", dimension = "host.type", value = "compute.Blade"}]}
+    aggregations = [{type = "longSum", name = "count", fieldName = "hw.temperature_count"}, {type = "doubleSum", name = "hw.temperature-Sum", fieldName = "hw.temperature"}]
+    post_aggregations = [{"type" = "expression", "name" = "intersight.ucs.host.temperature", "expression" = "(\"hw.temperature-Sum\" / \"count\")"}]
+    field_names = ["intersight.ucs.host.temperature"]
+    otel_dimension_to_attribute_map = { "host.name" = "intersight.host.name" }
+    otel_attributes = { "intersight.cluster" = {{ .Values.clusterName | quote }} }
+    interval = 60
+
+    # UCS Network Utilization
+    [[tspollers]]
+    name = "ucs_network_utilization"
+    datasource = "NetworkInterfaces"
+    dimensions = ["host.name"]
+    filter = { type = "and", fields = [{type = "selector", dimension = "instrument.name", value = "hw.network"}]}
+    aggregations = [{type = "longSum", name = "count", fieldName = "hw.network.bandwidth.utilization_all_count"}, {type = "doubleSum", name = "hw.network.bandwidth.utilization_all-Sum", fieldName = "hw.network.bandwidth.utilization_all"}]
+    post_aggregations = [{type = "arithmetic", name = "intersight.ucs.network.utilization.average", fn = "/", fields = [{type = "fieldAccess", name = "hw.network.bandwidth.utilization_all-Sum",fieldName = "hw.network.bandwidth.utilization_all-Sum"},{type = "fieldAccess", name = "count", fieldName = "count"}]}]
+    field_names = ["intersight.ucs.network.utilization.average"]
+    otel_dimension_to_attribute_map = { "host.name" = "intersight.host.name" }
+    otel_attributes = { "intersight.cluster" = {{ .Values.clusterName | quote }} }
+    interval = 60

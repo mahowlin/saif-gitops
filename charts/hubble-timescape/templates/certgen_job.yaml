@@ -1,0 +1,15 @@
+{{- if (include "hubble-timescape-certgen.enabled" .) }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "hubble-timescape-certgen.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hubble-timescape-certgen.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": "pre-install,pre-upgrade"
+    "helm.sh/hook-delete-policy": "before-hook-creation,hook-succeeded"
+{{- $root := deepCopy . -}}
+{{- $_ := set $root "useInitSA" .Values.certgen.serviceAccount.create }}
+spec: {{- include "hubble-timescape-certgen.jobSpec" $root | nindent 2 }}
+{{- end }}

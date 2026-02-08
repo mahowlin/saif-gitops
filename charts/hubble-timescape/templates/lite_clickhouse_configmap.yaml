@@ -1,0 +1,131 @@
+{{- if and .Values.lite.enabled .Values.lite.clickhouse.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "hubble-timescape-lite.name" . }}-clickhouse-settings
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "hubble-timescape-lite.labels" . | nindent 4 }}
+data:
+  clickhouse-users.xml: |-
+    <?xml version="1.0"?>
+    <clickhouse>
+      <users>
+        <!-- Remove default user -->
+        <default remove="remove">
+        </default>
+
+        <timescape_lite>
+          <networks>
+            <ip>::1</ip>
+            <ip>127.0.0.1</ip>
+          </networks>
+          <profile>timescape_lite</profile>
+          <quota>default</quota>
+          <password></password>
+        </timescape_lite>
+        <tablemetrics>
+          <networks>
+            <!-- we need to allow connections from all interfaces to allow prometheus to scrape metrics using the http api -->
+            <ip>::/0</ip>
+          </networks>
+          <profile>tablemetrics</profile>
+          <quota>default</quota>
+          <password></password>
+          <grants>
+            <query>REVOKE ALL ON *.*</query>
+            <query>GRANT SELECT on hubble.*</query>
+            <query>GRANT SELECT on system.parts</query>
+            <query>GRANT SHOW on system.*</query>
+          </grants>
+        </tablemetrics>
+      </users>
+    </clickhouse>
+  clickhouse-profiles.xml: |-
+    <?xml version="1.0"?>
+    <clickhouse>
+      <profiles>
+        <timescape_lite>
+          <allow_ddl>1</allow_ddl>
+          <log_queries>1</log_queries>
+          <prefer_global_in_and_join>1</prefer_global_in_and_join>
+          <query_profiler_cpu_time_period_ns>0</query_profiler_cpu_time_period_ns>
+          <query_profiler_real_time_period_ns>0</query_profiler_real_time_period_ns>
+          <readonly>0</readonly>
+          <skip_unavailable_shards>1</skip_unavailable_shards>
+        </timescape_lite>
+        <tablemetrics>
+          <allow_ddl>0</allow_ddl>
+          <log_queries>1</log_queries>
+          <prefer_global_in_and_join>1</prefer_global_in_and_join>
+          <query_profiler_cpu_time_period_ns>0</query_profiler_cpu_time_period_ns>
+          <query_profiler_real_time_period_ns>0</query_profiler_real_time_period_ns>
+          <readonly>2</readonly>
+          <skip_unavailable_shards>1</skip_unavailable_shards>
+        </tablemetrics>
+      </profiles>
+    </clickhouse>
+  clickhouse-settings.xml: |-
+    <?xml version="1.0"?>
+    <clickhouse>
+      <!-- Listen wildcard address to allow accepting connections from other containers and host network. -->
+      <listen_host>::</listen_host>
+      <listen_host>0.0.0.0</listen_host>
+      <listen_try>1</listen_try>
+      <!-- see https://clickhouse.com/docs/en/operations/server-configuration-parameters/settings/#max-table-size-to-drop -->
+      <max_table_size_to_drop>0</max_table_size_to_drop>
+      <max_concurrent_queries>{{ .Values.clickhouse.settings.maxConcurrentQueries }}</max_concurrent_queries>
+      <max_connections>{{ .Values.clickhouse.settings.maxConnections }}</max_connections>
+      <merge_tree>
+        <max_suspicious_broken_parts>{{ .Values.clickhouse.settings.maxSuspiciousBrokenParts }}</max_suspicious_broken_parts>
+      </merge_tree>
+      {{- range $key, $table := .Values.clickhouse.settings.systemLogs.tables }}
+      {{- $defaultEnabled := $.Values.clickhouse.settings.systemLogs.enabled }}
+      {{- $defaultTTL := $.Values.clickhouse.settings.systemLogs.ttl | default "2 hour" }}
+      {{- if eq $key "queryLog" }}
+        {{- if not (eq $.Values.clickhouse.settings.queryLog.enabled nil) }}
+          {{- $defaultEnabled = $.Values.clickhouse.settings.queryLog.enabled }}
+        {{- end }}
+        {{- if $.Values.clickhouse.settings.queryLog.ttlDays }}
+          {{- $defaultTTL = (printf "%.0f day" $.Values.clickhouse.settings.queryLog.ttlDays) }}
+        {{- end }}
+      {{- end }}
+      {{- if or (and $defaultEnabled (eq $table.enabled nil)) $table.enabled }}
+      <{{ $key | snakecase }} replace="1">
+        <ttl>{{ $table.column | default "event_time" }} + INTERVAL {{ $table.ttl | default $defaultTTL }}</ttl>
+      </{{ $key | snakecase }}>
+      {{- else }}
+      <{{ $key | snakecase }} remove="1"></{{ $key | snakecase }}>
+      {{- end }}
+      {{- end }}
+      <logger>
+        <console>true</console>
+        <level>{{ .Values.clickhouse.settings.logger.level }}</level>
+      </logger>
+      <prometheus>
+        <asynchronous_metrics>true</asynchronous_metrics>
+        <endpoint>/metrics</endpoint>
+        <events>true</events>
+        <metrics>true</metrics>
+        <port>8001</port>
+      </prometheus>
+      <postgresql_port remove="1"></postgresql_port>
+      <mysql_port remove="1"></mysql_port>
+      <!-- we're always running with a single replica, no point in opening it -->
+      <interserver_http_port remove="1"></interserver_http_port>
+      <http_handlers>
+        <rule>
+          <url>/isovalent/metrics/table</url>
+          <methods>GET</methods>
+          <handler>
+            <type>predefined_query_handler</type>
+            <query>
+              {{ include "hubble-timescape-clickhouse.tablemetrics-queries" . | nindent 14 }}
+            </query>
+          </handler>
+        </rule>
+        <!-- keep the default handlers such as query, play, ping -->
+        <defaults/>
+      </http_handlers>
+    </clickhouse>
+{{- end }}

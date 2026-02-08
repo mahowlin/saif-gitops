@@ -1,0 +1,24 @@
+{{- if and (not .Values.lite.enabled) .Values.ui.enabled .Values.ui.loadBalancing.enabled }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "hubble-timescape-ui.fullname" . }}-ilb
+  labels:
+    {{- include "hubble-timescape-ui.labels" . | nindent 4 }}
+    {{- with .Values.ui.loadBalancing.clusterRoleBinding.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.ui.loadBalancing.clusterRoleBinding.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "hubble-timescape-ui.fullname" . }}-ilb
+subjects:
+- kind: ServiceAccount
+  name: {{ .Values.ui.serviceAccount.name | quote }}
+  namespace: {{ .Release.Namespace }}
+{{- end }}

@@ -1,0 +1,64 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+# NIMService - Runs LLaMA 3.1 70B AWQ INT4 with NIM multi-LLM container
+# Provides OpenAI-compatible API for PolicyPilot
+# Uses AWQ quantization to fit 70B model on single L40S GPU (48GB VRAM)
+apiVersion: apps.nvidia.com/v1alpha1
+kind: NIMService
+metadata:
+  name: llama31-70b-instruct
+  namespace: nim-llm
+spec:
+  # Required auth secret for NIM operator
+  authSecret: ngc-api-key
+
+  # NIM multi-LLM container (supports HuggingFace models including AWQ)
+  image:
+    repository: registry.example.com:5000/nim/nvidia/llm-nim
+    tag: "1.14.1"
+    pullPolicy: IfNotPresent
+
+  # Environment configuration - point to local AWQ model
+  # Memory tuning: 70B AWQ uses ~37GB + CUDA overhead, leaving ~9GB for KV cache
+  # NIM_MAX_MODEL_LEN=7000 fits within available KV cache memory (tested: needs <7792)
+  env:
+    - name: NIM_MODEL_NAME
+      value: "/model-store/llama-3.1-70b-awq-int4"
+    - name: NIM_SERVED_MODEL_NAME
+      value: "meta/llama-3.1-70b-instruct"
+    - name: NIM_SERVER_PORT
+      value: "8000"
+    - name: NIM_MAX_MODEL_LEN
+      value: "7000"
+    - name: NIM_DISABLE_CUDA_GRAPH
+      value: "1"
+
+  # Resource allocation - single L40S GPU (48GB VRAM)
+  # AWQ INT4 model uses ~40GB VRAM, leaving ~8GB for KV cache
+  resources:
+    requests:
+      nvidia.com/gpu: 1
+      memory: "48Gi"
+      cpu: "8"
+    limits:
+      nvidia.com/gpu: 1
+      memory: "64Gi"
+
+  # Storage - mount PVC with AWQ model
+  # Note: NIM Operator mounts at /model-store regardless of mountPath setting
+  storage:
+    pvc:
+      name: nim-cache-pvc
+
+  # Service exposure
+  expose:
+    service:
+      type: ClusterIP
+      port: 8000
+
+  # Scaling
+  replicas: 1
+  autoscaling:
+    enabled: false

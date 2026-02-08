@@ -1,0 +1,72 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+# ClusterPolicy - Configures NVIDIA GPU Operator components
+# Triggers deployment of driver, device plugin, dcgm, etc.
+# Applied by gpu-cluster-policy Application after operator CRD is available
+apiVersion: nvidia.com/v1
+kind: ClusterPolicy
+metadata:
+  name: gpu-cluster-policy
+spec:
+  operator:
+    defaultRuntime: crio
+    use_ocp_driver_toolkit: true
+
+  # Common daemonset configuration (required field)
+  daemonsets: {}
+
+  # DCGM - NVIDIA Data Center GPU Manager (required field)
+  dcgm:
+    enabled: true
+
+  # NVIDIA Driver - uses OpenShift Driver Toolkit for kernel compatibility
+  # Pin to 570.195.03 for CUDA 12.8 (required by NIM 1.14.x)
+  # repository/image required for disconnected - points to local registry
+  driver:
+    enabled: true
+    repository: registry.example.com:5000/nvidia
+    image: driver
+    version: "570.195.03"
+    useOpenKernelModules: false
+
+  # Container Toolkit - enables GPU access in containers
+  toolkit:
+    enabled: true
+
+  # Device Plugin - exposes nvidia.com/gpu resource
+  devicePlugin:
+    enabled: true
+
+  # DCGM Exporter - GPU metrics for Prometheus
+  dcgmExporter:
+    enabled: true
+
+  # GPU Feature Discovery - labels nodes with GPU info
+  gfd:
+    enabled: true
+
+  # MIG Manager - disabled (L40S doesn't support MIG)
+  migManager:
+    enabled: false
+
+  # Node Status Exporter - node-level GPU status
+  nodeStatusExporter:
+    enabled: true
+
+  # Sandbox Device Plugin - for kata/VM workloads (disabled)
+  sandboxDevicePlugin:
+    enabled: false
+
+  # vGPU Manager - for vGPU (disabled, not using vGPU)
+  vgpuManager:
+    enabled: false
+
+  # vGPU Device Manager - disabled
+  vgpuDeviceManager:
+    enabled: false
+
+  # vfio Manager - for GPU passthrough to VMs (disabled)
+  vfioManager:
+    enabled: false
