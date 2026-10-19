@@ -1,0 +1,93 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: model-download-config
+  namespace: nim-llm
+data:
+  model-dir: /model-store/llama-3.1-70b-awq-int4
+  base-url: ''
+  files: |
+    config.json
+    generation_config.json
+    model-00001-of-00009.safetensors
+    model-00002-of-00009.safetensors
+    model-00003-of-00009.safetensors
+    model-00004-of-00009.safetensors
+    model-00005-of-00009.safetensors
+    model-00006-of-00009.safetensors
+    model-00007-of-00009.safetensors
+    model-00008-of-00009.safetensors
+    model-00009-of-00009.safetensors
+    model.safetensors.index.json
+    special_tokens_map.json
+    tokenizer.json
+    tokenizer_config.json
+  sha256sums: ''
+  download.sh: |
+    #!/bin/bash
+    set +x
+    set -euo pipefail
+    : "${MODEL_DIR:?model directory required}" "${MODEL_BASE_URL:?base URL required}"
+    : "${MODEL_FILES_FILE:?file list required}" "${MODEL_CHECKSUM_FILE:?checksums required}"
+    : "${WEB_USERNAME:?runtime username required}" "${WEB_PASSWORD:?runtime password required}"
+    : "${MODEL_STORE_ROOT:?storage root required}"
+    case "$MODEL_DIR" in "$MODEL_STORE_ROOT"/*) ;; *) echo 'Model directory is outside the mounted store' >&2; exit 1;; esac
+    case "$MODEL_DIR" in */../*|*/..|*/./*|*/.|*/) echo 'Invalid model directory' >&2; exit 1;; esac
+    case "$MODEL_BASE_URL" in https://*) ;; *) echo 'Model base URL must use HTTPS' >&2; exit 1;; esac
+    case "$MODEL_BASE_URL" in *'@'*|*'?'*|*'#'*) echo 'Invalid model base URL' >&2; exit 1;; esac
+    [ -s "$MODEL_FILES_FILE" ] && [ -s "$MODEL_CHECKSUM_FILE" ] || { echo 'Trusted file list and checksums required' >&2; exit 1; }
+    FILES=$(cat "$MODEL_FILES_FILE")
+    for file in $FILES; do
+      case "$file" in ''|.|..|*[!a-zA-Z0-9._-]*) echo 'Invalid model filename' >&2; exit 1;; esac
+    done
+    awk 'NF != 2 || length($1) != 64 || $1 ~ /[^[:xdigit:]]/ {exit 1}' "$MODEL_CHECKSUM_FILE"
+    cmp -s <(printf '%s\n' "$FILES" | sort) <(awk '{print $2}' "$MODEL_CHECKSUM_FILE" | sort) || { echo 'Checksum manifest must cover the exact file list' >&2; exit 1; }
+    [ -z "$(printf '%s\n' "$FILES" | sort | uniq -d)" ] || { echo 'Duplicate model filename' >&2; exit 1; }
+    mkdir -p "$(dirname "$MODEL_DIR")"
+    [ ! -L "$MODEL_DIR" ] || { echo 'Model path must not be a symlink' >&2; exit 1; }
+    lock="${MODEL_DIR}.download-lock"
+    mkdir "$lock" || { echo 'Another download owns this model path' >&2; exit 1; }
+    stage=''
+    backup=''
+    cleanup() {
+      result=$?
+      trap - EXIT
+      if [ -n "$backup" ] && [ -e "$backup" ] && [ ! -e "$MODEL_DIR" ]; then mv "$backup" "$MODEL_DIR" || result=1; fi
+      if [ -n "$stage" ] && [ -d "$stage" ]; then rm -rf -- "$stage" || result=1; fi
+      rmdir "$lock" || result=1
+      exit "$result"
+    }
+    trap cleanup EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM HUP
+    complete() {
+      [ -d "$1" ] || return 1
+      for file in $FILES; do [ -s "$1/$file" ] && [ ! -L "$1/$file" ] || return 1; done
+      (cd "$1" && sha256sum --status --check "$MODEL_CHECKSUM_FILE")
+    }
+    if complete "$MODEL_DIR"; then echo 'Existing model matches the complete trusted manifest'; exit 0; fi
+    stage=$(mktemp -d "${MODEL_DIR}.download.XXXXXX")
+    # Config on stdin keeps runtime credentials out of curl argv and progress logs.
+    auth=$(printf '%s:%s' "$WEB_USERNAME" "$WEB_PASSWORD" | base64 | tr -d '\r\n')
+    for file in $FILES; do
+      status=$(printf 'header = "Authorization: Basic %s"\n' "$auth" | curl --config - \
+        --proto '=https' --proto-redir '=https' --fail --silent --show-error \
+        --output "$stage/$file" --write-out '%{http_code}' "${MODEL_BASE_URL%/}/$file")
+      [ "$status" = 200 ] || { echo 'Model server returned a non-success response' >&2; exit 1; }
+    done
+    unset auth
+    complete "$stage" || { echo 'Downloaded model failed completeness/checksum validation' >&2; exit 1; }
+    # Preserve the previous shared-PVC read interface after private staging.
+    for file in $FILES; do chmod 0644 "$stage/$file"; done
+    chmod 0755 "$stage"
+    if [ -e "$MODEL_DIR" ]; then backup="${stage}.previous"; mv "$MODEL_DIR" "$backup"; fi
+    # Same filesystem rename publishes only the fully verified directory.
+    mv "$stage" "$MODEL_DIR"
+    stage=''
+    complete "$MODEL_DIR" || { echo 'Published model validation failed' >&2; exit 1; }
+    if [ -n "$backup" ]; then rm -rf -- "$backup"; backup=''; fi
+    echo 'Complete model published'

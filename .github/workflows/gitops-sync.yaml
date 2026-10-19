@@ -12,13 +12,7 @@ on:
       cluster:
         description: 'Cluster to refresh ArgoCD on'
         required: false
-        type: choice
-        options:
-          - none
-          - ai-pod-1
-          - ai-pod-2
-          - ai-pod-3
-          - ai-pod-4
+        type: string
         default: none
       inject_secrets:
         description: 'Inject application secrets (Splunk, etc.)'
@@ -29,9 +23,9 @@ on:
 jobs:
   sync:
     name: Sync
-    runs-on: [self-hosted, linux, saif-github-runner]
+    runs-on: ${{ fromJSON(vars.RUNNER_LABELS) }}
     container:
-      image: ghcr.io/mahowlin/github-actions-container:${{ vars.CONTAINER_TAG }}
+      image: ${{ vars.RUNNER_CONTAINER_IMAGE }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -41,8 +35,6 @@ jobs:
       # Gitea sync disabled - ArgoCD now points directly to GitHub
       # - name: Push to Gitea
       #   run: |
-      #     git remote add gitea http://${{ secrets.GITEA_USER }}:${{ secrets.GITEA_TOKEN }}@gitea.example.com:3000/mahowlin/saif-gitops.git || true
-      #     git push gitea main --force
 
       - name: Sync complete
         run: echo "ArgoCD will sync directly from GitHub"
@@ -51,9 +43,9 @@ jobs:
     name: Inject Secrets
     needs: sync
     if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.cluster != 'none' && github.event.inputs.inject_secrets == 'true' }}
-    runs-on: [self-hosted, linux, saif-github-runner]
+    runs-on: ${{ fromJSON(vars.RUNNER_LABELS) }}
     container:
-      image: ghcr.io/mahowlin/github-actions-container:${{ vars.CONTAINER_TAG }}
+      image: ${{ vars.RUNNER_CONTAINER_IMAGE }}
     steps:
       - name: Fetch kubeconfig from repo
         env:
@@ -61,15 +53,16 @@ jobs:
         run: |
           CLUSTER="${{ github.event.inputs.cluster }}"
 
-          git clone --depth 1 --branch main \
-            # Configure this URL for your kubeconfig storage repository
-            "https://x-access-token:${KUBECONFIG_REPO_TOKEN}@github.com/mahowlin/saif-kubeconfigs.git" \
-            /tmp/kubeconfigs
+          KUBECONFIG_REPOSITORY="${{ vars.KUBECONFIG_REPOSITORY }}"
+          KUBECONFIG_REF="${{ vars.KUBECONFIG_REF }}"
+          [[ "$KUBECONFIG_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] && test -n "$KUBECONFIG_REF" || exit 1
+          export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$KUBECONFIG_REPO_TOKEN" | base64 | tr -d '\n')"
+          git clone --depth 1 --branch "$KUBECONFIG_REF" "https://github.com/$KUBECONFIG_REPOSITORY.git" /tmp/kubeconfigs
 
-          cp "/tmp/kubeconfigs/kubeconfig-${CLUSTER}" /tmp/kubeconfig
+          cp "/tmp/kubeconfigs/clusters/${CLUSTER}/kubeconfig" /tmp/kubeconfig
           chmod 600 /tmp/kubeconfig
 
-          sed -i "s|server: https://localhost:[0-9]*|server: https://api.${CLUSTER}.example.com:6443|g" /tmp/kubeconfig
 
       - name: Check Sealed Secrets Status
         id: sealed-secrets-check
@@ -227,18 +220,28 @@ jobs:
           echo "Creating hubble-timescape namespace if needed..."
           oc create namespace hubble-timescape --dry-run=client -o yaml | oc apply -f -
 
+          set -euo pipefail
+          umask 077
+          INJECT_DIR=$(mktemp -d "$RUNNER_TEMP/timescape-inject.XXXXXX")
+          trap 'rm -rf -- "$INJECT_DIR"' EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          printf '%s' "$HUBBLE_CLICKHOUSE_PASSWORD" > "$INJECT_DIR/clickhouse"
+          printf '%s' "$HUBBLE_PUSH_API_PASSWORD" > "$INJECT_DIR/push"
           # ClickHouse credentials for all Timescape components
           for component in ingester migrate server analyzer trimmer; do
             echo "Injecting ClickHouse credentials for ${component}..."
+            PUSH_ARGS=()
+            if [ "$component" = ingester ]; then PUSH_ARGS=(--from-file="PUSH_API_PASSWORD=$INJECT_DIR/push"); fi
             oc -n hubble-timescape create secret generic hubble-timescape-${component}-creds \
-              --from-literal=CLICKHOUSE_PASSWORD="$HUBBLE_CLICKHOUSE_PASSWORD" \
+              --from-file="CLICKHOUSE_PASSWORD=$INJECT_DIR/clickhouse" "${PUSH_ARGS[@]}" \
               --dry-run=client -o yaml | oc apply -f -
           done
 
           # Push API credentials for Vector -> Timescape communication
           echo "Injecting Push API credentials..."
           oc -n hubble-timescape create secret generic vector-push-credentials \
-            --from-literal=push-api-password="$HUBBLE_PUSH_API_PASSWORD" \
+            --from-file="push-api-password=$INJECT_DIR/push" \
             --dry-run=client -o yaml | oc apply -f -
 
           echo "✅ Hubble Timescape secrets injected for ${CLUSTER}"
@@ -251,9 +254,9 @@ jobs:
     name: Refresh ArgoCD
     needs: [sync, inject-secrets]
     if: ${{ always() && github.event_name == 'workflow_dispatch' && github.event.inputs.cluster != 'none' && needs.sync.result == 'success' }}
-    runs-on: [self-hosted, linux, saif-github-runner]
+    runs-on: ${{ fromJSON(vars.RUNNER_LABELS) }}
     container:
-      image: ghcr.io/mahowlin/github-actions-container:${{ vars.CONTAINER_TAG }}
+      image: ${{ vars.RUNNER_CONTAINER_IMAGE }}
     steps:
       - name: Fetch kubeconfig from repo
         env:
@@ -267,17 +270,18 @@ jobs:
           CLUSTER="${{ github.event.inputs.cluster }}"
 
           echo "Fetching kubeconfig from kubeconfig storage repo..."
-          git clone --depth 1 --branch main \
-            # Configure this URL for your kubeconfig storage repository
-            "https://x-access-token:${KUBECONFIG_REPO_TOKEN}@github.com/mahowlin/saif-kubeconfigs.git" \
-            /tmp/kubeconfigs
+          KUBECONFIG_REPOSITORY="${{ vars.KUBECONFIG_REPOSITORY }}"
+          KUBECONFIG_REF="${{ vars.KUBECONFIG_REF }}"
+          [[ "$KUBECONFIG_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] && test -n "$KUBECONFIG_REF" || exit 1
+          export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$KUBECONFIG_REPO_TOKEN" | base64 | tr -d '\n')"
+          git clone --depth 1 --branch "$KUBECONFIG_REF" "https://github.com/$KUBECONFIG_REPOSITORY.git" /tmp/kubeconfigs
 
-          cp "/tmp/kubeconfigs/kubeconfig-${CLUSTER}" /tmp/kubeconfig
+          cp "/tmp/kubeconfigs/clusters/${CLUSTER}/kubeconfig" /tmp/kubeconfig
           chmod 600 /tmp/kubeconfig
 
           # Transform localhost tunnel URL to direct API endpoint for CI/CD
           # Repo kubeconfigs use SSH tunnel (localhost:port), runner uses direct access
-          sed -i "s|server: https://localhost:[0-9]*|server: https://api.${CLUSTER}.example.com:6443|g" /tmp/kubeconfig
 
           echo "✅ Kubeconfig retrieved and transformed for ${CLUSTER}"
 

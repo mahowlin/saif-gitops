@@ -8,7 +8,7 @@ metadata:
   name: dashboard-updater
   namespace: splunk-reporter
 spec:
-  schedule: "*/5 * * * *"  # Every 5 minutes
+  schedule: '*/5 * * * *'
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
@@ -19,23 +19,25 @@ spec:
           serviceAccountName: dashboard-updater
           restartPolicy: OnFailure
           containers:
-            - name: updater
-              image: registry.example.com:5000/openshift4/ose-tools-rhel9:latest
-              command:
-                - /bin/bash
-                - /scripts/update-dashboard-charts.sh
-              env:
-                - name: SPLUNK_API_TOKEN
-                  valueFrom:
-                    secretKeyRef:
-                      name: splunk-credentials
-                      key: api-token
-                # All data queried dynamically - no static values
-              volumeMounts:
-                - name: script
-                  mountPath: /scripts
-          volumes:
+          - name: updater
+            image: registry.example.com:5000/openshift4/ose-tools-rhel9:latest
+            command:
+            - /bin/bash
+            - /scripts/update-dashboard-charts.sh
+            env:
+            - name: SPLUNK_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: splunk-credentials
+                  key: api-token
+            volumeMounts:
             - name: script
-              configMap:
-                name: dashboard-updater-script
-                defaultMode: 0755
+              mountPath: /scripts
+            envFrom:
+            - configMapRef:
+                name: dashboard-updater-settings
+          volumes:
+          - name: script
+            configMap:
+              name: dashboard-updater-script
+              defaultMode: 493

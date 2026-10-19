@@ -1,0 +1,27 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+
+# Populate the intended account realm and chart IDs before selecting the updater.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dashboard-updater-settings
+  namespace: splunk-reporter
+data:
+  SPLUNK_REALM: ''
+  CHART_ACI_VLAN: ''
+  CHART_CILIUM: ''
+  CHART_CUDA: ''
+  CHART_GPU_DRIVER: ''
+  CHART_GPU_MODEL: ''
+  CHART_HUBBLE: ''
+  CHART_KUBERNETES: ''
+  CHART_LLM: ''
+  CHART_NIM: ''
+  CHART_NODE_IP: ''
+  CHART_OPENSHIFT: ''
+  CHART_POLICIES: ''
+  CHART_STORAGE: ''
+  CHART_TETRAGON: ''
+  CHART_UCS_BLADE: ''

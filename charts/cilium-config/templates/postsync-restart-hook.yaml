@@ -3,7 +3,7 @@
 # See LICENSE in the project root.
 
 {{- if .Values.ciliumConfig.enabled }}
-# PostSync Hook - Restart Cilium agents after CiliumConfig changes
+# PostSync Hook - Restart Cilium agents and operator after CiliumConfig changes
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -11,8 +11,10 @@ metadata:
   namespace: cilium
   annotations:
     argocd.argoproj.io/hook: PostSync
-    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
 spec:
+  activeDeadlineSeconds: 660
+  backoffLimit: 0
   ttlSecondsAfterFinished: 300
   template:
     spec:
@@ -20,51 +22,46 @@ spec:
       restartPolicy: Never
       containers:
         - name: restart
-          image: registry.example.com:5000/openshift4/ose-tools-rhel9:latest
+          image: {{ required "ciliumConfig.restartJobImage is required" .Values.ciliumConfig.restartJobImage }}
           command:
             - /bin/sh
             - -c
             - |
-              echo "Restarting Cilium DaemonSet to pick up CiliumConfig changes..."
+              set -eu
+              echo "Restarting Cilium agents to pick up CiliumConfig changes..."
               oc rollout restart daemonset/cilium -n cilium
-              echo "Waiting for rollout to complete..."
+              echo "Waiting for Cilium agent rollout to complete..."
               oc rollout status daemonset/cilium -n cilium --timeout=300s
-              echo "Cilium restart complete."
+              echo "Restarting Cilium operator to activate controller changes..."
+              oc rollout restart deployment/cilium-operator -n cilium
+              echo "Waiting for Cilium operator rollout to complete..."
+              oc rollout status deployment/cilium-operator -n cilium --timeout=300s
+              echo "Cilium agent and operator restarts complete."
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: cilium-restart-sa
   namespace: cilium
-  annotations:
-    argocd.argoproj.io/hook: PostSync
-    argocd.argoproj.io/hook-delete-policy: HookSucceeded
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
+kind: Role
 metadata:
   name: cilium-restart-role
-  annotations:
-    argocd.argoproj.io/hook: PostSync
-    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+  namespace: cilium
 rules:
   - apiGroups: ["apps"]
-    resources: ["daemonsets"]
+    resources: ["daemonsets", "deployments"]
     verbs: ["get", "list", "watch", "patch"]
-  - apiGroups: [""]
-    resources: ["pods"]
-    verbs: ["list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
+kind: RoleBinding
 metadata:
   name: cilium-restart-binding
-  annotations:
-    argocd.argoproj.io/hook: PostSync
-    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+  namespace: cilium
 roleRef:
   apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
+  kind: Role
   name: cilium-restart-role
 subjects:
   - kind: ServiceAccount

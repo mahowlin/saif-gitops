@@ -13,31 +13,17 @@ data:
     # Dashboard Chart Updater for Splunk Observability Cloud
     # PURE TELEMETRY - Zero static config, all data queried live
     # If data unavailable, show "unknown" - never show stale values
+    set +x
     set -euo pipefail
 
-    # Configuration
-    API_URL="${SPLUNK_API_URL:-https://api.us1.signalfx.com/v2}"
-    API_TOKEN="${SPLUNK_API_TOKEN:?SPLUNK_API_TOKEN required}"
-
-    # Chart IDs (these are Splunk chart identifiers, not data)
-    CHART_UCS_BLADE="G_3GseDA4AA"
-    CHART_ACI_VLAN="G_3GxjiA4AI"
-    CHART_STORAGE="G_3GsT9AwAA"
-    CHART_CPU="G__1vmrAwAI"
-    CHART_RAM="G__1xtlA0AA"
-    CHART_NODE_IP="G_5hDFpAwAA"
-    CHART_CILIUM="G_3HORhAwAA"
-    CHART_HUBBLE="G_3HIQCA0AI"
-    CHART_TETRAGON="G_3HKjIA0Ao"
-    # Forward % (G_3HMXfA0AE) and Drop % (G_3HIBwA0AE) are now SignalFlow charts
-    CHART_POLICIES="G_3HJBSA4AA"
-    CHART_OPENSHIFT="G_3HJKqAwAM"
-    CHART_KUBERNETES="G_3HOY3A4BE"
-    CHART_GPU_MODEL="G_3HXsgA0AA"
-    CHART_GPU_DRIVER="G_3HQcIAwAU"
-    CHART_CUDA="G_3HcPGA4Aw"
-    CHART_NIM="G_3HWNBAwAI"
-    CHART_LLM="G_3HRqSAwAA"
+    # Deployment/account choices come from dashboard-updater-settings.
+    : "${SPLUNK_REALM:?declared realm required}" "${SPLUNK_API_TOKEN:?runtime API token required}"
+    [[ "$SPLUNK_REALM" =~ ^[a-zA-Z0-9-]+$ ]] || { echo 'Invalid realm' >&2; exit 1; }
+    API_URL="https://api.${SPLUNK_REALM}.signalfx.com"
+    for variable in CHART_ACI_VLAN CHART_CILIUM CHART_CUDA CHART_GPU_DRIVER CHART_GPU_MODEL CHART_HUBBLE CHART_KUBERNETES CHART_LLM CHART_NIM CHART_NODE_IP CHART_OPENSHIFT CHART_POLICIES CHART_STORAGE CHART_TETRAGON CHART_UCS_BLADE; do
+      [ -n "${!variable:-}" ] && [[ "${!variable}" =~ ^[a-zA-Z0-9_-]+$ ]] || { echo "Missing/invalid chart mapping: $variable" >&2; exit 1; }
+    done
+    case "$SPLUNK_API_TOKEN" in *$'\n'*|*$'\r'*) echo 'Invalid API token format' >&2; exit 1;; esac
 
     # Color scheme
     BG_BLUE="#B3E5FC"
@@ -49,16 +35,17 @@ data:
     COLOR_READY="#2E7D32"
 
     update_chart() {
-        local chart_id="$1"
-        local name="$2"
-        local html="$3"
-        local escaped_html
-        escaped_html=$(echo "$html" | sed 's/"/\\"/g')
-        curl -sf -X PUT "$API_URL/chart/$chart_id" \
-            -H "Content-Type: application/json" \
-            -H "X-SF-Token: $API_TOKEN" \
-            -d "{\"name\":\"$name\",\"options\":{\"type\":\"Text\",\"markdown\":\"$escaped_html\"}}" >/dev/null 2>&1 && \
-            echo "  [OK] $name" || echo "  [FAIL] $name"
+        local chart_id="$1" name="$2" html="$3" payload header status
+        payload=$(jq -n --arg name "$name" --arg html "$html" '{name:$name,options:{type:"Text",markdown:$html}}')
+        header=$(printf 'X-SF-Token: %s' "$SPLUNK_API_TOKEN" | sed 's/\\/\\\\/g; s/"/\\"/g')
+        if ! status=$(printf 'header = "%s"\n' "$header" | curl --config - --proto '=https' \
+            --silent --fail -X PUT -H 'Content-Type: application/json' \
+            --data "$payload" --output /dev/null --write-out '%{http_code}' "$API_URL/v2/chart/$chart_id" 2>/dev/null); then
+            echo "  [FAIL] $name" >&2
+            return 1
+        fi
+        if [[ ! "$status" =~ ^2[0-9][0-9]$ ]]; then echo "  [FAIL] $name" >&2; return 1; fi
+        echo "  [OK] $name"
     }
 
     make_chart_html() {
@@ -89,30 +76,13 @@ data:
     CLUSTER_NAME=$(kubectl get infrastructure cluster -o jsonpath='{.status.infrastructureName}' 2>/dev/null | sed 's/-[a-z0-9]*$//' || echo "unknown")
     echo "  Cluster: $CLUSTER_NAME"
 
-    # UCS Blade Model - static lookup (hardware doesn't change)
-    # All AI Pod blades are UCSX-210C-M7
-    case "$CLUSTER_NAME" in
-        ai-pod-1|ai-pod-2|ai-pod-3|ai-pod-4) UCS_BLADE="X210C-M7" ;;
-        *) UCS_BLADE="unknown" ;;
-    esac
+    # Optional inventory annotations supplied by the selected deployment inputs.
+    # Missing measurements remain unknown; cluster names do not imply hardware/VLANs.
+    UCS_BLADE="${UCS_BLADE_MODEL:-unknown}"
+    ACI_VLAN="${ACI_VLAN_ID:-unknown}"
+    CPU_MODEL="${CPU_MODEL_NAME:-unknown}"
     echo "  UCS Blade: $UCS_BLADE"
-
-    # ACI VLAN - static lookup (network config doesn't change)
-    case "$CLUSTER_NAME" in
-        ai-pod-1) ACI_VLAN="700" ;;
-        ai-pod-2) ACI_VLAN="100" ;;
-        ai-pod-3) ACI_VLAN="702" ;;
-        ai-pod-4) ACI_VLAN="703" ;;
-        *) ACI_VLAN="unknown" ;;
-    esac
     echo "  ACI VLAN: $ACI_VLAN"
-
-    # CPU Model - static lookup (all blades have same CPU)
-    # Intel Xeon Gold 6448Y (32 cores per socket, 2 sockets = 64 cores)
-    case "$CLUSTER_NAME" in
-        ai-pod-1|ai-pod-2|ai-pod-3|ai-pod-4) CPU_MODEL="Intel Xeon 6448Y" ;;
-        *) CPU_MODEL="unknown" ;;
-    esac
     echo "  CPU: $CPU_MODEL"
 
     # RAM - Total capacity from node (shows total, not utilization)
@@ -190,7 +160,7 @@ data:
     echo "  Policies: $POLICY_COUNT (CNP: $CNP_COUNT, CCNP: $CCNP_COUNT)"
 
     # Forward/Drop % - Now SignalFlow metric charts (not managed by CronJob)
-    # Charts G_3HMXfA0AE and G_3HIBwA0AE use cilium_forward_count_total / cilium_drop_count_total
+    # Charts [site chart mapping] and [site chart mapping] use cilium_forward_count_total / cilium_drop_count_total
     echo "  Forward/Drop: SignalFlow charts (live metrics)"
 
     # === NVIDIA ===

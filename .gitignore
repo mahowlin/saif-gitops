@@ -21,3 +21,6 @@ __pycache__/
 
 # Claude
 .claude/
+
+# Canonical metadata-only adoption skeleton; contains no Secret data/stringData.
+!/apps/hcp/management/hosted-cluster-lifecycle/overlays/example-management/bootstrap/adopt-example-shared-pull-secret.yaml

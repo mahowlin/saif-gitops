@@ -1,0 +1,14 @@
+# Copyright (c) 2026 Cisco and/or its affiliates.
+# Licensed under the Cisco Sample Code License, Version 1.1
+# See LICENSE in the project root.
+{{- $cluster := required "clusterName is required" .Values.clusterName -}}
+{{- $serial := required "bladeSerial is required" .Values.bladeSerial -}}
+{{- if not (regexMatch "^[A-Za-z0-9._-]+$" $cluster) -}}{{ fail "clusterName contains invalid characters" }}{{- end -}}
+{{- if not (regexMatch "^[A-Za-z0-9-]+$" $serial) -}}{{ fail "bladeSerial contains invalid characters" }}{{- end -}}
+{{- $image := required "image.intersightOtel.repository is required" .Values.image.intersightOtel.repository -}}
+{{- $realm := required "splunk.realm is required" .Values.splunk.realm -}}
+{{- range $url := list .Values.splunk.apiUrl .Values.splunk.ingestUrl -}}
+{{- if not (regexMatch "^https://[A-Za-z0-9.-]+(:[0-9]+)?(/[^[:space:]]*)?$" ($url | default "")) -}}
+{{- fail "splunk.apiUrl and splunk.ingestUrl must be declared HTTPS endpoints" -}}
+{{- end -}}
+{{- end -}}

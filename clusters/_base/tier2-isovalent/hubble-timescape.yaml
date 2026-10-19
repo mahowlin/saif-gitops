@@ -1,119 +1,43 @@
-# Copyright (c) 2026 Cisco and/or its affiliates.
-# Licensed under the Cisco Sample Code License, Version 1.1
-# See LICENSE in the project root.
-
-# Hubble Timescape - Flow Observability with ClickHouse
-# Standardized configuration for ALL clusters
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: hubble-timescape
   namespace: openshift-gitops
   annotations:
-    argocd.argoproj.io/sync-wave: "0"
+    argocd.argoproj.io/sync-wave: '0'
   finalizers:
-    - resources-finalizer.argocd.argoproj.io
+  - resources-finalizer.argocd.argoproj.io
 spec:
   project: default
   source:
-    repoURL: https://github.com/mahowlin/saif-gitops.git
+    repoURL: https://github.com/mahowlin/secure-ai-gitops.git
     targetRevision: main
     path: charts/hubble-timescape
     helm:
-      values: |
-        # Timescape components - internal registry
-        ingester:
-          image:
-            repository: registry.example.com:5000/isovalent/hubble-timescape
-            tag: "v1.18.2"
-          # connectionLogs = Tetragon connection events (PROCESS_CONNECT/CLOSE)
-          connectionLogs:
-            enabled: true
-            pattern: "tetragon-connections\\.log"
-          server:
-            http:
-              enabled: true
-              basicAuth:
-                enabled: true
-                username: timescape_push_api
-                secretName: hubble-timescape-ingester-creds
-
-        server:
-          image:
-            repository: registry.example.com:5000/isovalent/hubble-timescape
-            tag: "v1.18.2"
-
-        migrate:
-          image:
-            repository: registry.example.com:5000/isovalent/hubble-timescape
-            tag: "v1.18.2"
-          ttl: "6h"
-
-        ui:
-          image:
-            repository: registry.example.com:5000/isovalent/hubble-timescape-ui
-            tag: "v1.18.2"
-          service:
-            type: LoadBalancer
-          ingress:
-            enabled: false
-          observability:
-            connections:
-              enabled: true
-            explorer:
-              enabled: true
-          networkSecurity:
-            assessment:
-              enabled: true
-            enforcementPoints:
-              enabled: true
-
-        clickhouse:
-          cluster:
-            enabled: true
-            image:
-              repository: registry.example.com:5000/isovalent/clickhouse-server
-              tag: "25.8.12.129-alpine"
-            # ClickHouse needs memory for wide-column queries (130+ cols per flow)
-            # 8Gi OOMs on observer.Observer/GetFlows with >500 flows
-            resources:
-              requests:
-                cpu: 1000m
-                memory: 8Gi
-              limits:
-                cpu: 4000m
-                memory: 32Gi
-            volumes:
-              data:
-                size: 100Gi
-                storageClassName: lvms-nvme-raid10
-
-        k8sExporter:
-          enabled: true
-          image:
-            repository: registry.example.com:5000/isovalent/hubble-k8s-exporter
-            tag: "v1.18.2"
-          securityContext:
-            privileged: true
-            runAsUser: 0
-          extraVolumes:
-            - name: hubble-logs
-              hostPath:
-                path: /var/run/cilium/hubble
-                type: DirectoryOrCreate
-          extraVolumeMounts:
-            - name: hubble-logs
-              mountPath: /var/run/cilium/hubble
-
-        trimmer:
-          enabled: true
-          flowsCount: 30000000
-          trimIntervalMinutes: 60
-
-        certgen:
-          image:
-            repository: registry.example.com:5000/isovalent/certgen
-            tag: "v0.2.4"
+      values: "ingester:\n  image:\n    repository: registry.example.com:5000/isovalent/hubble-timescape\n\
+        \    tag: v1.18.2\n  connectionLogs:\n    enabled: true\n    pattern: connectionlog\\\
+        .log\n  server:\n    http:\n      enabled: true\n      basicAuth:\n      \
+        \  username: timescape_push_api\n        secretName: hubble-timescape-ingester-creds\n\
+        \    authMethod: basic-auth\n    grpc:\n      enabled: false\nserver:\n  image:\n\
+        \    repository: registry.example.com:5000/isovalent/hubble-timescape\n    tag: v1.18.2\n\
+        migrate:\n  image:\n    repository: registry.example.com:5000/isovalent/hubble-timescape\n\
+        \    tag: v1.18.2\n  ttl: 6h\nui:\n  image:\n    repository: registry.example.com:5000/isovalent/hubble-timescape-ui\n\
+        \    tag: v1.18.2\n  service:\n    type: LoadBalancer\n  ingress:\n    enabled:\
+        \ false\n  observability:\n    connections:\n      enabled: true\n    explorer:\n\
+        \      enabled: true\n  networkSecurity:\n    assessment:\n      enabled:\
+        \ true\n    enforcementPoints:\n      enabled: true\nclickhouse:\n  cluster:\n\
+        \    enabled: true\n    image:\n      repository: registry.example.com:5000/isovalent/clickhouse-server\n\
+        \      tag: 25.8.12.129-alpine\n    resources:\n      requests:\n        cpu:\
+        \ 1000m\n        memory: 8Gi\n      limits:\n        cpu: 4000m\n        memory:\
+        \ 32Gi\n    volumes:\n      data:\n        size: 100Gi\n        storageClassName:\
+        \ lvms-nvme-raid10\nk8sExporter:\n  enabled: true\n  image:\n    repository:\
+        \ registry.example.com:5000/isovalent/hubble-k8s-exporter\n    tag: v1.18.2\n  securityContext:\n\
+        \    privileged: true\n    runAsUser: 0\n  extraVolumes:\n  - name: hubble-logs\n\
+        \    hostPath:\n      path: /var/run/cilium/hubble\n      type: DirectoryOrCreate\n\
+        \  extraVolumeMounts:\n  - name: hubble-logs\n    mountPath: /var/run/cilium/hubble\n\
+        trimmer:\n  enabled: true\n  flowsCount: 30000000\n  trimIntervalMinutes:\
+        \ 60\ncertgen:\n  image:\n    repository: registry.example.com:5000/isovalent/certgen\n\
+        \    tag: v0.2.4\n"
   destination:
     server: https://kubernetes.default.svc
     namespace: hubble-timescape
@@ -122,5 +46,5 @@ spec:
       prune: true
       selfHeal: true
     syncOptions:
-      - CreateNamespace=true
-      - ServerSideApply=true
+    - CreateNamespace=true
+    - ServerSideApply=true

@@ -2,7 +2,7 @@
 # Licensed under the Cisco Sample Code License, Version 1.1
 # See LICENSE in the project root.
 
-{{- if .Values.ciliumConfig.enabled }}
+{{ if .Values.ciliumConfig.enabled }}
 # CiliumConfig - Managed by ArgoCD Day 2
 # This CR controls the Cilium operator configuration
 apiVersion: cilium.io/v1alpha1
@@ -13,6 +13,25 @@ metadata:
     app.kubernetes.io/name: clife
     app.kubernetes.io/managed-by: argocd
 spec:
+  {{ if .Values.imageOverride.cilium.enabled }}
+  # Cilium agent image override
+  image:
+    repository: {{ required "imageOverride.cilium.repository is required" .Values.imageOverride.cilium.repository | quote }}
+    tag: {{ required "imageOverride.cilium.tag is required" .Values.imageOverride.cilium.tag | quote }}
+    digest: {{ required "imageOverride.cilium.digest is required" .Values.imageOverride.cilium.digest | quote }}
+    useDigest: true
+
+  {{ end }}
+  {{ if .Values.imageOverride.envoy.enabled }}
+  # Cilium Envoy image override
+  envoy:
+    image:
+      repository: {{ required "imageOverride.envoy.repository is required" .Values.imageOverride.envoy.repository | quote }}
+      tag: {{ required "imageOverride.envoy.tag is required" .Values.imageOverride.envoy.tag | quote }}
+      digest: {{ required "imageOverride.envoy.digest is required" .Values.imageOverride.envoy.digest | quote }}
+      useDigest: true
+
+  {{ end }}
   # Cluster identification
   cluster:
     name: {{ required "clusterName is required" .Values.clusterName }}
@@ -21,13 +40,24 @@ spec:
   securityContext:
     privileged: true
 
-  # Device configuration - br-ex is the OVS bridge on OpenShift
+  {{- $devices := .Values.ciliumConfig.devices | default list }}
+  {{- if and (empty $devices) .Values.ciliumConfig.device }}
+  {{- $devices = list .Values.ciliumConfig.device }}
+  {{- end }}
+  {{- $directRoutingDevice := .Values.ciliumConfig.directRoutingDevice | default .Values.ciliumConfig.device }}
+  {{- if $devices }}
+  # Device configuration - host interfaces eligible for the Cilium datapath
   devices:
-    - br-ex
+  {{- range $devices }}
+    - {{ . }}
+  {{- end }}
+  {{- end }}
 
+  {{ if $directRoutingDevice }}
   # NodePort configuration
   nodePort:
-    directRoutingDevice: br-ex
+    directRoutingDevice: {{ $directRoutingDevice }}
+  {{ end }}
 
   # Routing mode - VXLAN tunnel
   routingMode: tunnel
@@ -54,6 +84,9 @@ spec:
 
   clusterHealthPort: 9940
 
+  extraConfig:
+    hubble-connectionlog-export-enabled: "true"
+
   # Kube-proxy replacement
   kubeProxyReplacement: true
   k8sServiceHost: {{ required "ciliumConfig.apiHost is required" .Values.ciliumConfig.apiHost }}
@@ -69,6 +102,13 @@ spec:
     enabled: true
     relay:
       enabled: true
+      {{ if .Values.imageOverride.hubbleRelay.enabled }}
+      image:
+        repository: {{ required "imageOverride.hubbleRelay.repository is required" .Values.imageOverride.hubbleRelay.repository | quote }}
+        tag: {{ required "imageOverride.hubbleRelay.tag is required" .Values.imageOverride.hubbleRelay.tag | quote }}
+        digest: {{ required "imageOverride.hubbleRelay.digest is required" .Values.imageOverride.hubbleRelay.digest | quote }}
+        useDigest: true
+      {{ end }}
     ui:
       enabled: false
     # Flow export to file for Vector/Timescape ingestion
@@ -102,6 +142,16 @@ spec:
 
   operator:
     replicas: 1
+    {{ if .Values.imageOverride.operator.enabled }}
+    image:
+      repository: {{ required "imageOverride.operator.repository is required" .Values.imageOverride.operator.repository | quote }}
+      tag: {{ required "imageOverride.operator.tag is required" .Values.imageOverride.operator.tag | quote }}
+      genericDigest: {{ required "imageOverride.operator.genericDigest is required" .Values.imageOverride.operator.genericDigest | quote }}
+      useDigest: true
+      {{ if .Values.imageOverride.operator.suffix }}
+      suffix: {{ .Values.imageOverride.operator.suffix | quote }}
+      {{ end }}
+    {{ end }}
     prometheus:
       enabled: true
       serviceMonitor:
@@ -111,20 +161,60 @@ spec:
   l2announcements:
     enabled: {{ .Values.l2.enabled }}
 
+  # Gateway API controller
+  gatewayAPI:
+    enabled: {{ .Values.gatewayAPI.enabled }}
+
   # Enterprise features
   enterprise:
     featureGate:
       approved:
         - EgressGatewayHA
         - EgressGatewayIPv4
-        {{- if .Values.l2.enabled }}
+        {{ if .Values.l2.enabled }}
         - L2Announcement
-        {{- end }}
-        {{- if .Values.gatewayAPI.enabled }}
+        {{ end }}
+        {{ if .Values.gatewayAPI.enabled }}
         - GatewayAPI
-        {{- end }}
+        {{ end }}
+        {{ if .Values.bgp.enabled }}
+        - EnterpriseBGPControlPlane
+        {{ end }}
+        {{ if .Values.bgp.bfd.enabled }}
+        - BFD
+        {{ end }}
+        {{ if .Values.bgp.routeImport.enabled }}
+        - BGPRouteImport
+        {{ end }}
+        {{ if .Values.privateNetworks.enabled }}
+        - PrivateNetworks
+        {{ if eq .Values.privateNetworks.mode "local-access" }}
+        - PrivateNetworkLocalAccess
+        {{ end }}
+        {{ end }}
     bgpControlPlane:
       enabled: {{ .Values.bgp.enabled }}
+      {{ if .Values.bgp.routeImport.enabled }}
+      routeImport:
+        enabled: true
+      {{ end }}
+    {{ if .Values.bgp.bfd.enabled }}
+    bfd:
+      enabled: true
+    {{ end }}
     egressGatewayHA:
       enabled: true
-{{- end }}
+    {{ if .Values.privateNetworks.enabled }}
+    privateNetworks:
+      enabled: true
+      mode: {{ .Values.privateNetworks.mode | quote }}
+      networkAttachmentDefinitions:
+        enabled: {{ .Values.privateNetworks.networkAttachmentDefinitions.enabled }}
+      webhook:
+        enabled: {{ .Values.privateNetworks.webhook.enabled }}
+        vms:
+          {{ if .Values.privateNetworks.webhook.vms.networkBinding }}
+          networkBinding: {{ .Values.privateNetworks.webhook.vms.networkBinding | quote }}
+          {{ end }}
+    {{ end }}
+{{ end }}

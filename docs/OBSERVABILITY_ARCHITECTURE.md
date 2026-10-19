@@ -1,365 +1,49 @@
-# Observability Architecture
+# Selected observability architecture
 
-This document describes the complete observability data flow for the SAIF Platform, including all data sources, collection methods, and destinations.
+This reference describes the configured management and hosted-cluster data paths. It is not evidence of live collection, complete ingestion or a healthy UI. The selected Applications, Helm values, Secret references and source files determine the actual pipeline.
 
----
-
-## Architecture Overview
-
-```
-┌─────────────────────────────────────────────────────────────────────────────────────────┐
-│                                    OPENSHIFT CLUSTER                                     │
-│                                                                                          │
-│  ┌────────────────────────────────────────────────────────────────────────────────────┐ │
-│  │                              DATA SOURCES                                           │ │
-│  │                                                                                     │ │
-│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐               │ │
-│  │  │   CILIUM    │  │  TETRAGON   │  │    DCGM     │  │ KUBERNETES  │               │ │
-│  │  │   (CNI)     │  │  (Security) │  │   (GPU)     │  │   (API)     │               │ │
-│  │  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘               │ │
-│  │         │                │                │                │                       │ │
-│  └─────────┼────────────────┼────────────────┼────────────────┼───────────────────────┘ │
-│            │                │                │                │                          │
-│            ▼                ▼                ▼                ▼                          │
-│  ┌─────────────────────────────────────────────────────────────────────────────────────┐│
-│  │                              DATA TYPES                                              ││
-│  │                                                                                      ││
-│  │  ┌─────────────────────┐  ┌─────────────────────┐  ┌─────────────────────┐         ││
-│  │  │     LOG EVENTS      │  │      METRICS        │  │    K8S EVENTS       │         ││
-│  │  │                     │  │                     │  │                     │         ││
-│  │  │ • hubble.log        │  │ • cilium_*          │  │ • k8s-events.log    │         ││
-│  │  │ • tetragon.log      │  │ • tetragon_*        │  │ • Policy changes    │         ││
-│  │  │ • tetragon-         │  │ • hubble_*          │  │ • Identity changes  │         ││
-│  │  │   connections.log   │  │ • DCGM_FI_*         │  │                     │         ││
-│  │  └──────────┬──────────┘  └──────────┬──────────┘  └──────────┬──────────┘         ││
-│  │             │                        │                        │                     ││
-│  └─────────────┼────────────────────────┼────────────────────────┼─────────────────────┘│
-│                │                        │                        │                       │
-│                ▼                        ▼                        ▼                       │
-│  ┌─────────────────────────────────────────────────────────────────────────────────────┐│
-│  │                              COLLECTORS                                              ││
-│  │                                                                                      ││
-│  │  ┌─────────────────────┐  ┌─────────────────────┐  ┌─────────────────────┐         ││
-│  │  │       VECTOR        │  │    SPLUNK OTEL      │  │    K8S-EXPORTER     │         ││
-│  │  │    (DaemonSet)      │  │     COLLECTOR       │  │    (Deployment)     │         ││
-│  │  │                     │  │                     │  │                     │         ││
-│  │  │ Reads:              │  │ Scrapes:            │  │ Watches:            │         ││
-│  │  │ • /var/run/cilium/  │  │ • :9962 (Cilium)    │  │ • CiliumIdentity    │         ││
-│  │  │   hubble/*.log      │  │ • :9965 (Hubble)    │  │ • NetworkPolicy     │         ││
-│  │  │                     │  │ • :2112 (Tetragon)  │  │ • CiliumNetPolicy   │         ││
-│  │  │ Sends to:           │  │ • :9400 (DCGM)      │  │                     │         ││
-│  │  │ • Push API (HTTP)   │  │                     │  │ Writes to:          │         ││
-│  │  │                     │  │ Sends to:           │  │ • k8s-events.log    │         ││
-│  │  │                     │  │ • Splunk Cloud      │  │                     │         ││
-│  │  └──────────┬──────────┘  └──────────┬──────────┘  └──────────┬──────────┘         ││
-│  │             │                        │                        │                     ││
-│  └─────────────┼────────────────────────┼────────────────────────┼─────────────────────┘│
-│                │                        │                        │                       │
-└────────────────┼────────────────────────┼────────────────────────┼───────────────────────┘
-                 │                        │                        │
-                 ▼                        ▼                        ▼
-┌────────────────────────────┐ ┌────────────────────────┐ ┌────────────────────────┐
-│    HUBBLE TIMESCAPE        │ │   SPLUNK OBSERVABILITY │ │   (Same as Vector)     │
-│                            │ │        CLOUD           │ │                        │
-│ • Ingester (Push API)      │ │                        │ │ k8s-events.log is      │
-│ • ClickHouse (Storage)     │ │ • Metrics dashboards   │ │ read by Vector and     │
-│ • Server (Query API)       │ │ • Alerting             │ │ sent to Timescape      │
-│ • UI (Visualization)       │ │ • GPU monitoring       │ │                        │
-│                            │ │ • Network monitoring   │ │                        │
-│ Access: LoadBalancer IP    │ │ • Security metrics     │ │                        │
-└────────────────────────────┘ └────────────────────────┘ └────────────────────────┘
+```mermaid
+flowchart TB
+  subgraph Management[Management OpenShift]
+    H["Cilium / Hubble files"] --> V["Vector agent"]
+    K["Kubernetes exporter"] --> H
+    V -->|"newline-delimited Push API"| I["Timescape ingestion"]
+    I --> C["ClickHouse"] --> Q["Query API / UI"]
+  end
+  subgraph Hosted[Registered hosted clusters]
+    GH["Guest Hubble and Kubernetes event files"] --> GV["Guest Vector exporter"]
+  end
+  GV -->|"cluster-specific prefix"| S["Declared S3 object store"]
+  S -->|"bucket patterns + cluster identity mapping"| I
 ```
 
----
+## Data sources and identity
 
-## Data Sources
+| Source | Selected file / data | Consumer |
+|---|---|---|
+| Cilium / Hubble | `/var/run/cilium/hubble/hubble.log` | Network flow records read by Vector |
+| Hubble connection export | `/var/run/cilium/hubble/connectionlog.log` | Connection records; this is the selected Connections source |
+| Kubernetes exporter | `/var/run/cilium/hubble/k8s-events.log` | Kubernetes object/identity events read alongside flows |
+| Application-model export | `/var/run/cilium/hubble/application-model.log` | Selected model events read alongside flows |
 
-### 1. Cilium (CNI)
+Tetragon has its own process/security event and metric configuration. This selected Vector/Timescape pipeline does not declare `tetragon.log` or `tetragon-connections.log` as its connection source. Do not infer process-execution or library-loading coverage in Timescape from the presence of Tetragon in the cluster. Check the actual selected source and documented release capability before making a wider product claim.
 
-**Component:** Cilium Agent DaemonSet
-**Namespace:** `cilium`
+## Management ingestion
 
-| Data Type | Source | Format | Destination |
-|-----------|--------|--------|-------------|
-| Network Flows | Hubble | JSON | **Timescape** (via Vector) |
-| Connection Logs | Hubble | JSON | **Timescape** (via Vector) |
-| Metrics | :9962 | Prometheus | **Splunk** (via OTEL) |
-| Hubble Metrics | :9965 | Prometheus | **Splunk** (via OTEL) |
+The generated [Vector Application](../clusters/_base/tier2-isovalent/vector-exporter.yaml) embeds its actual source file list, cluster identity enrichment and Push API sink values. Vector reads host files, preserves event data, adds the management cluster identity and posts newline-delimited events to the Timescape ingester. Its password comes from a runtime Secret reference; no credential value belongs in this documentation or browser-visible output.
 
-**Log Files:**
-- `/var/run/cilium/hubble/hubble.log` - Network flows
-- `/var/run/cilium/hubble/connectionlog.log` - Connection logs (for Timescape Connections tab)
+The [Timescape Application](../clusters/_base/tier2-isovalent/hubble-timescape.yaml) and [bundled chart](../charts/hubble-timescape/values.yaml) define ingestion, ClickHouse, server and UI consumers. Secret key names and authentication-method values must match that exact chart contract. Source rendering, an image name or a root build is not evidence that this authentication or ingestion has succeeded.
 
-**Sample Flow Event:**
-```json
-{
-  "flow": {
-    "time": "2024-01-15T10:30:00Z",
-    "source": {
-      "identity": 12345,
-      "namespace": "default",
-      "pod_name": "frontend-abc123",
-      "labels": ["app=frontend"]
-    },
-    "destination": {
-      "identity": 67890,
-      "namespace": "default",
-      "pod_name": "backend-xyz789",
-      "labels": ["app=backend"]
-    },
-    "l4": {
-      "TCP": {"source_port": 45678, "destination_port": 8080}
-    },
-    "verdict": "FORWARDED"
-  }
-}
-```
+## Hosted ingestion
 
----
+Each enrolled hosted cluster has separate [exporter Applications](../apps/hcp/tenant/observability-scc/) and a Vector S3-export path generated from Datacenter observability defaults. These are distinct from the management Push API path. The cluster-specific object prefix and Timescape bucket/pattern/override-cluster mapping must agree, so events remain attributed to the correct guest cluster.
 
-### 2. Tetragon (Runtime Security)
+The current image-delivery default uses the declared preceding site registry; a hosted management-registry cache is an explicit alternative with its own producer and activation prerequisites. S3 endpoints, bucket, prefixes, images and runtime Secret references come from canonical inputs and generated values, not from a fixed endpoint in this guide.
 
-**Component:** Tetragon DaemonSet
-**Namespace:** `tetragon`
+## Metrics and optional consumers
 
-| Data Type | Source | Format | Destination |
-|-----------|--------|--------|-------------|
-| Metrics | :2112 | Prometheus | **Splunk** (via OTEL) |
+OpenShift monitoring, Cilium/Hubble metrics, Tetragon metrics and GPU metrics are separate from the event-file pipeline above. Splunk/Intersight collectors require their own selected Applications, receivers, runtime credentials and endpoints; their existence as optional templates does not mean this composition enables them. The selected root and each child source define what is actually requested.
 
-**Note:** Tetragon process events are collected as **metrics** and sent to Splunk, not Timescape.
-The Timescape Connections tab uses **Hubble connection logs** (see Cilium section above).
+## Inspect the configured contract
 
-**Log Files:**
-- `/var/run/cilium/hubble/tetragon.log` - Process events (for debugging, not Timescape)
-
-**Supported Event Types:**
-| Event | Description |
-|-------|-------------|
-| `PROCESS_EXEC` | Process execution |
-| `PROCESS_EXIT` | Process termination |
-| `PROCESS_CONNECT` | Outbound TCP connection |
-| `PROCESS_CLOSE` | Connection close |
-| `PROCESS_ACCEPT` | Inbound TCP connection |
-| `PROCESS_LISTEN` | Socket listen |
-| `PROCESS_DNS` | DNS query/response |
-| `PROCESS_HTTP` | HTTP request/response |
-| `PROCESS_TLS` | TLS handshake |
-
-**Sample Connection Event:**
-```json
-{
-  "process_connect": {
-    "process": {
-      "exec_id": "abc123",
-      "pid": 1234,
-      "binary": "/usr/bin/curl",
-      "arguments": "https://api.example.com",
-      "pod": {
-        "namespace": "default",
-        "name": "app-pod-xyz"
-      }
-    },
-    "destination_ip": "10.0.1.100",
-    "destination_port": 443,
-    "destination_names": ["api.example.com"]
-  },
-  "node_name": "worker-1",
-  "time": "2024-01-15T10:30:00Z"
-}
-```
-
-**Key Metrics:**
-| Metric | Description |
-|--------|-------------|
-| `tetragon_events_total` | Total events by type |
-| `tetragon_dns_total` | DNS queries by binary, namespace, workload |
-| `tetragon_bpf_missed_events_total` | Dropped events |
-
----
-
-### 3. DCGM (GPU Monitoring)
-
-**Component:** NVIDIA DCGM Exporter
-**Namespace:** `nvidia-gpu-operator`
-
-| Data Type | Source | Format | Description |
-|-----------|--------|--------|-------------|
-| GPU Metrics | :9400 | Prometheus | `DCGM_FI_*` metrics |
-
-**Key Metrics:**
-| Metric | Description |
-|--------|-------------|
-| `DCGM_FI_DEV_GPU_UTIL` | GPU utilization % |
-| `DCGM_FI_DEV_MEM_COPY_UTIL` | Memory copy utilization |
-| `DCGM_FI_DEV_FB_USED` | Framebuffer memory used |
-| `DCGM_FI_DEV_FB_FREE` | Framebuffer memory free |
-| `DCGM_FI_DEV_POWER_USAGE` | Power consumption (W) |
-| `DCGM_FI_DEV_GPU_TEMP` | GPU temperature (C) |
-
----
-
-### 4. Kubernetes Events
-
-**Component:** k8s-exporter (Hubble Timescape)
-**Namespace:** `hubble-timescape`
-
-| Data Type | Source | Format | Description |
-|-----------|--------|--------|-------------|
-| K8s Events | K8s API | JSON | Policy and identity changes |
-
-**Log File:** `/var/run/cilium/hubble/k8s-events.log`
-
-**Watched Resources:**
-- CiliumIdentity
-- CiliumNetworkPolicy
-- CiliumClusterwideNetworkPolicy
-- NetworkPolicy
-
----
-
-## Collectors
-
-### Vector (Log Collector)
-
-**Deployment:** DaemonSet
-**Namespace:** `hubble-timescape`
-
-**Sources:**
-```yaml
-sources:
-  hubble_logs:
-    type: file
-    include:
-      - /var/run/cilium/hubble/hubble.log
-      - /var/run/cilium/hubble/k8s-events.log
-  tetragon_logs:
-    type: file
-    include:
-      - /var/run/cilium/hubble/tetragon-connections.log
-```
-
-**Destination:** Hubble Timescape Push API (HTTP POST to port 4260)
-
----
-
-### Splunk OTEL Collector
-
-**Deployment:** DaemonSet + ClusterReceiver
-**Namespace:** `splunk-otel`
-
-**Scrape Targets:**
-| Target | Endpoint | Metrics Pattern |
-|--------|----------|-----------------|
-| Cilium Agent | cilium-agent.cilium.svc:9962 | `cilium_*` |
-| Hubble | hubble-metrics.cilium.svc:9965 | `hubble_*` |
-| Tetragon | tetragon-metrics.tetragon.svc:2112 | `tetragon_*` |
-| DCGM | nvidia-dcgm-exporter.nvidia-gpu-operator.svc:9400 | `DCGM_FI_*` |
-
-**Destination:** Splunk Observability Cloud (us1 realm)
-
----
-
-## Destinations
-
-### Hubble Timescape
-
-**Access:** LoadBalancer IP (check `oc get svc -n hubble-timescape hubble-timescape-ui`)
-
-**Data Available:**
-| Tab | Data Source | Description |
-|-----|-------------|-------------|
-| Flows | hubble.log | Network flow visualization |
-| Connections | tetragon-connections.log | Process-to-network correlation |
-| Policies | k8s-events.log | Network policy audit |
-| Explorer | All | Query interface |
-| Assessment | All | Security posture analysis |
-
-**Query Capabilities:**
-- Filter by namespace, pod, identity
-- Time range selection
-- Flow verdict analysis
-- Policy impact analysis
-
----
-
-### Splunk Observability Cloud
-
-**Access:** https://app.us1.signalfx.com
-
-**Dashboards Available:**
-| Dashboard | Metrics | Use Case |
-|-----------|---------|----------|
-| GPU Monitoring | DCGM_FI_* | GPU utilization, temperature, power |
-| Network | cilium_*, hubble_* | Connection counts, policy drops |
-| Security | tetragon_* | Process events, DNS queries |
-
----
-
-## Integration Points
-
-### For AI/ML Workloads
-
-1. **GPU Metrics** → Splunk
-   - Monitor GPU utilization during training/inference
-   - Alert on thermal throttling
-   - Capacity planning
-
-2. **Network Flows** → Timescape
-   - Analyze model API traffic patterns
-   - Identify data exfiltration attempts
-   - Troubleshoot connectivity issues
-
-3. **Process Events** → Timescape
-   - Track process execution in AI pods
-   - Monitor library loading (CUDA, PyTorch)
-   - Detect anomalous behavior
-
-### For Security Operations
-
-1. **Connection Logs** → Timescape
-   - Process-aware network visibility
-   - Identify which binary made each connection
-   - DNS query correlation
-
-2. **Policy Events** → Timescape
-   - Network policy change audit
-   - Before/after policy comparison
-   - Compliance reporting
-
-3. **Security Metrics** → Splunk
-   - Event volume trending
-   - Alert on unusual activity spikes
-   - Long-term security posture tracking
-
----
-
-## Configuration Reference
-
-| Component | Config Location | Key Settings |
-|-----------|-----------------|--------------|
-| Tetragon | `apps/tetragon/operator-config.yaml` | export-filename, connection-log-filename |
-| Vector | `clusters/_base/tier2-isovalent/vector-exporter.yaml` | sources, sinks |
-| Timescape | `clusters/_base/tier2-isovalent/hubble-timescape.yaml` | ingester, UI features |
-| Splunk OTEL | `clusters/_base/tier4-observability/splunk-otel.yaml` | scrape configs |
-
----
-
-## Troubleshooting
-
-### No data in Timescape
-
-1. Check Vector logs: `oc logs -n hubble-timescape -l app.kubernetes.io/name=vector`
-2. Check Ingester logs: `oc logs -n hubble-timescape deployment/hubble-timescape-ingester`
-3. Verify log files exist: `oc debug node/<node> -- ls -la /var/run/cilium/hubble/`
-
-### No metrics in Splunk
-
-1. Check OTEL collector logs: `oc logs -n splunk-otel -l app=splunk-otel-collector`
-2. Verify scrape targets are reachable
-3. Check Splunk access token validity
-
-### Missing Tetragon events
-
-1. Verify Tetragon DaemonSet running: `oc get pods -n tetragon`
-2. Check export allowlist in operator-config.yaml
-3. Verify export directory permissions
+[Agent operations](../agents/operations.md) owns local root/child rendering and inspection commands. Read the management Vector values, hosted exporter values, Timescape bucket patterns and referenced Secret metadata together. Keep all plaintext auth/kubeconfig/sealing material private. Runtime qualification must separately demonstrate collection, authenticated delivery, ingestion and a query/UI result with the correct source-cluster identity and freshness.

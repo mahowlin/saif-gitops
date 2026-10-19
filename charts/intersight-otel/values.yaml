@@ -16,7 +16,7 @@ bladeSerial: ""
 # image settings
 image:
   intersightOtel:
-    repository: registry.example.com:5000/mahowlin/intersight-otel
+    repository: ""  # Required: selected mirrored collector image
     tag: "v0.3.0-numeric-fields"
   otelCollector:
     repository: registry.example.com:5000/otel/opentelemetry-collector-contrib
@@ -24,9 +24,9 @@ image:
 
 # Splunk configuration
 splunk:
-  realm: us1
-  apiUrl: https://api.us1.signalfx.com
-  ingestUrl: https://ingest.us1.signalfx.com
+  realm: ""  # Required: selected account realm
+  apiUrl: ""  # Required HTTPS API endpoint
+  ingestUrl: ""  # Required HTTPS ingest endpoint
 
 # Resource limits
 resources:

@@ -12,7 +12,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/mahowlin/saif-gitops.git
+    repoURL: https://github.com/mahowlin/secure-ai-gitops.git
     targetRevision: main
     path: apps/mnist-ml-lab
   destination:

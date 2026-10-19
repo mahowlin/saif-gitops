@@ -1,78 +1,75 @@
 #!/usr/bin/env bash
-
 # Copyright (c) 2026 Cisco and/or its affiliates.
 # Licensed under the Cisco Sample Code License, Version 1.1
 # See LICENSE in the project root.
-
-# Validate SealedSecret names match expected patterns
-#
-# This script ensures SealedSecrets have correct names before deployment.
-# Run in CI or before committing to catch naming issues early.
-
+# Validate scoped SealedSecret metadata against the declared runtime references.
 set -euo pipefail
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SEALED_SECRETS_DIR="${SCRIPT_DIR}/../apps/sealed-secrets"
+python3 - "${SCRIPT_DIR}/../apps/sealed-secrets" <<'PY'
+from pathlib import Path
+import json
+import sys
+import yaml
 
-# Expected secret names per namespace
-declare -A EXPECTED_SECRETS
-EXPECTED_SECRETS["hubble-timescape"]="hubble-timescape-ingester-creds hubble-timescape-migrate-creds hubble-timescape-server-creds hubble-timescape-analyzer-creds hubble-timescape-trimmer-creds vector-push-credentials"
-EXPECTED_SECRETS["nim-llm"]="ngc-api-key"
-EXPECTED_SECRETS["splunk-otel"]="splunk-otel-secret"
-EXPECTED_SECRETS["intersight-otel"]="intersight-api-credentials splunk-credentials"
-
-ERRORS=0
-
-echo "Validating SealedSecrets..."
-echo ""
-
-# Check each namespace directory
-for ns_dir in "$SEALED_SECRETS_DIR"/*/; do
-    [ -d "$ns_dir" ] || continue
-
-    ns=$(basename "$ns_dir")
-    echo "Checking namespace: $ns"
-
-    # Skip if no expected secrets defined
-    if [ -z "${EXPECTED_SECRETS[$ns]:-}" ]; then
-        echo "  ⚠️  No expected secrets defined for namespace '$ns'"
+root = Path(sys.argv[1])
+manifest = yaml.safe_load((root / 'secrets-manifest.yaml').read_text())
+expected = {}
+for group in manifest['secrets']:
+    for secret in group['secrets']:
+        identity = (group['scope'], group['namespace'], secret['name'])
+        keys = {key['name']: (key['github_secret'], key.get('multiline', False))
+                for key in secret['keys']}
+        if len(keys) != len(secret['keys']) or (identity in expected and expected[identity] != keys):
+            raise SystemExit('Validation failed: conflicting declared secret identity')
+        expected[identity] = keys
+# Hosted writer enrollment has its own existing metadata owner. Preserve that
+# boundary instead of widening _common to arbitrary cluster scopes.
+retained = set()
+hosted_paths = {}
+intent_path = root / 'hosted-writer-intent.json'
+if intent_path.is_file():
+    intent = json.loads(intent_path.read_text())
+    retained = set(intent.get('retainedExternal', [])) | {
+        row['cluster'] for row in intent.get('enrollments', []) if row['enrollment'] == 'retained'}
+    for target in intent['targets']:
+        relative = Path(target['sealedPath']).relative_to('apps/sealed-secrets')
+        if (len(relative.parts) != 3 or relative.parts[:2] != (target['cluster'], target['namespace'])
+                or target['cluster'] in retained):
+            raise SystemExit('Validation failed: conflicting hosted writer scope/path')
+        identity = (target['cluster'], target['namespace'], target['secretName'])
+        keys = {key: ('hosted-writer-intent', False) for key in target['keys']}
+        if (len(keys) != len(target['keys'])
+                or (identity in expected and set(expected[identity]) != set(keys))
+                or (identity in hosted_paths and hosted_paths[identity] != relative)):
+            raise SystemExit('Validation failed: conflicting declared secret identity')
+        expected[identity] = keys
+        hosted_paths[identity] = relative
+files = sorted(root.glob('*/*/*.yaml'))
+if not expected or not files:
+    raise SystemExit('Validation failed: empty secret metadata or scoped observation')
+errors = []
+validated = 0
+for file in files:
+    if file.parent.parent.name in retained:
+        print('Retained external scope not qualified: ' + file.parent.parent.name)
         continue
-    fi
-
-    # Check each SealedSecret file
-    for file in "$ns_dir"/*.yaml; do
-        [ -f "$file" ] || continue
-
-        # Extract secret name from metadata.name
-        secret_name=$(grep -E '^\s+name:' "$file" | head -1 | awk '{print $2}' | tr -d '"')
-
-        if [ -z "$secret_name" ]; then
-            echo "  ❌ Cannot extract name from: $(basename "$file")"
-            ERRORS=$((ERRORS + 1))
-            continue
-        fi
-
-        # Check if name is in expected list
-        expected="${EXPECTED_SECRETS[$ns]}"
-        if echo "$expected" | grep -qw "$secret_name"; then
-            echo "  ✅ $secret_name"
-        else
-            echo "  ❌ $secret_name (unexpected name!)"
-            echo "     Expected one of: $expected"
-            ERRORS=$((ERRORS + 1))
-        fi
-    done
-
-    echo ""
-done
-
-# Summary
-if [ $ERRORS -gt 0 ]; then
-    echo "❌ Validation failed with $ERRORS error(s)"
-    echo ""
-    echo "Fix the SealedSecret names or update EXPECTED_SECRETS in this script."
-    echo "Run: gh workflow run sealed-secrets-sync.yaml -f secrets_to_seal=all"
-    exit 1
-else
-    echo "✅ All SealedSecrets have valid names"
-fi
+    validated += 1
+    # Only metadata and encrypted key names are validated; no values are logged.
+    doc = yaml.safe_load(file.read_text())
+    metadata = doc.get('metadata', {}) if isinstance(doc, dict) else {}
+    identity = (file.parent.parent.name, metadata.get('namespace'), metadata.get('name'))
+    keys = doc.get('spec', {}).get('encryptedData', {}) if isinstance(doc, dict) else {}
+    template = doc.get('spec', {}).get('template', {}).get('metadata', {}) if isinstance(doc, dict) else {}
+    if (not isinstance(doc, dict) or doc.get('kind') != 'SealedSecret'
+            or identity not in expected or identity[1] != file.parent.name
+            or (identity in hosted_paths and file.relative_to(root) != hosted_paths[identity])
+            or set(keys) != set(expected.get(identity, {}))
+            or template.get('name', identity[2]) != identity[2]
+            or template.get('namespace', identity[1]) != identity[1]):
+        errors.append(file.relative_to(root).as_posix())
+if not validated:
+    raise SystemExit('Validation failed: no owned scoped observations')
+if errors:
+    raise SystemExit('Validation failed for scoped metadata: ' + ', '.join(errors))
+print(f'Validated {validated} owned scoped SealedSecret identities and key sets')
+PY
